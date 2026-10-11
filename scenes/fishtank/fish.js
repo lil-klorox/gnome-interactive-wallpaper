@@ -3,15 +3,10 @@
 // by yaw (fish turn through a 3/4 and front view instead of flipping), plus pupils drawn on top
 // that look at the cursor or whatever the brain is looking at. Static textures only, no repaints.
 import Clutter from 'gi://Clutter';
-import Cogl from 'gi://Cogl';
-import GdkPixbuf from 'gi://GdkPixbuf';
-import GLib from 'gi://GLib';
 import St from 'gi://St';
 import Cairo from 'cairo';
-import { makeBrain, think, PERSONALITY } from './brain.js';
+import { makeBrain, think, PERSONALITY, drowsy, lazy } from './brain.js';
 import { makeFish, step } from './steer.js';
-
-const DIR = GLib.build_filenamev([GLib.path_get_dirname(GLib.filename_from_uri(import.meta.url)[0]), 'assets', 'fish']);
 
 // n: how many; cruise px/s at full size; burst/coast: wander gait seconds; turn rad/s
 const SPECIES = [
@@ -26,58 +21,12 @@ const SPECIES = [
 ];
 const YAW_RATE = 3.5;  // rad/s a fish swings round through the front view
 const FAR = { scale: 0.7, opacity: 165 };
+const FLAKES = 9, FLAKE_LIFE = 20, SAVE_EVERY = 60;
+const DAY = 864e5;
 
-// One sheet (rows = yaw angles, columns = frames) -> an St.ImageContent per frame, shared by every
-// fish of that species. GNOME 48 wants the Cogl context first; older shells don't take it.
-function loadSheet(file, m) {
-    const pix = GdkPixbuf.Pixbuf.new_from_file(file);
-    if (!pix.get_has_alpha() || pix.get_width() < m.fw * m.frames || pix.get_height() < m.fh * m.yaws.length)
-        throw new Error(`bad sheet ${file}`);
-    const cogl = global.stage.context?.get_backend?.().get_cogl_context?.();
-    const frames = [];
-    for (let r = 0; r < m.yaws.length; r++) {
-        for (let c = 0; c < m.frames; c++) {
-            const sub = pix.new_subpixbuf(c * m.fw, r * m.fh, m.fw, m.fh);
-            const img = St.ImageContent.new_with_preferred_size(m.fw, m.fh);
-            const args = [sub.read_pixel_bytes(), Cogl.PixelFormat.RGBA_8888, m.fw, m.fh, sub.get_rowstride()];
-            try {
-                img.set_bytes(cogl, ...args);
-            } catch {
-                img.set_bytes(...args);
-            }
-            frames.push(img);
-        }
-    }
-    return frames;
-}
-
-// Sheets are shared by every fish of a species and by every School (one per monitor), and
-// dropped when the last School lets go.
-const sheets = new Map();  // name -> {m, users}
-
-function acquire(name) {
-    let e = sheets.get(name);
-    if (!e) sheets.set(name, e = { m: loadSpecies(name), users: 0 });
-    e.users++;
-    return e.m;
-}
-
-function release(name) {
-    const e = sheets.get(name);
-    if (e && --e.users <= 0) sheets.delete(name);
-}
-
-function loadSpecies(name) {
-    const [, bytes] = GLib.file_get_contents(GLib.build_filenamev([DIR, `${name}.json`]));
-    const m = JSON.parse(new TextDecoder().decode(bytes));
-    m.img = loadSheet(GLib.build_filenamev([DIR, `${name}.png`]), m);
-    if (m.puff) {
-        Object.assign(m.puff, { yaws: m.yaws });
-        m.puff.img = loadSheet(GLib.build_filenamev([DIR, `${name}-puff.png`]), m.puff);
-    }
-    m.rmax = Math.max(1, ...[m, m.puff].filter(Boolean).flatMap(s => s.eyes.flat(2).map(e => e[2])));
-    return m;
-}
+// Stored per fish id: {born: ms, fed: count}. Store data is untrusted: anything odd starts fresh.
+const record = (r, now) => Number.isFinite(r?.born) && r.born <= now && Number.isInteger(r.fed) && r.fed >= 0
+    ? { born: r.born, fed: Math.min(r.fed, 1e6) } : { born: now, fed: 0 };
 
 // Iris + pupil + glint, painted once per eye; the actor is moved/squashed per frame.
 function paintEye(area, iris) {
@@ -107,20 +56,20 @@ function paintEye(area, iris) {
 }
 
 export class School {
-    constructor(fishLayers, swimBounds) {
-        const b = this._b = swimBounds;
+    constructor(ctx, fishLayers, swimBounds) {
+        const b = this._b = swimBounds, now = Date.now();
+        this._ctx = ctx;
         this._fish = [];
         this._mates = [[], []];   // [{f, b}] per layer, for brains
         this._motion = [[], []];  // motion states per layer, for steering
+        this._store = { ...ctx.store.get()?.fish };
         const S = Math.min(1, Math.max(0.5, b.h / 1000));  // smaller fish on small screens
         const failed = [];
-        this._held = [];
         let k = 0;
         for (const sp of SPECIES) {
             let m;
             try {
-                m = acquire(sp.name);
-                this._held.push(sp.name);
+                m = this._species(sp.name);
             } catch (e) {
                 failed.push(`${sp.name} (${e.message})`);
                 continue;
@@ -128,7 +77,9 @@ export class School {
             const pers = PERSONALITY[sp.name];
             const hx = b.x + Math.random() * b.w, hy = b.y + b.h * (pers.band[0] + Math.random() * (pers.band[1] - pers.band[0]));
             for (let i = 0; i < sp.n; i++) {
-                const layer = sp.school || k++ % 3 ? 1 : 0, sc = S * (layer ? 1 : FAR.scale);
+                const id = sp.name + i, rec = this._store[id] = record(this._store[id], now);
+                const layer = sp.school || k++ % 3 ? 1 : 0;
+                const sc = S * (layer ? 1 : FAR.scale) * (0.8 + 0.2 * Math.min(1, (now - rec.born) / DAY / 30));  // grows for a month
                 const s = makeFish({
                     // schools start bunched together, everyone else anywhere in their home band
                     x: sp.school ? hx + Math.random() * 80 : b.x + Math.random() * b.w,
@@ -136,36 +87,151 @@ export class School {
                     cruise: sp.cruise * sc * (0.85 + Math.random() * 0.3), pad: m.len * sc * 0.5,
                     school: sp.school, turn: sp.turn, burst: sp.burst, coast: sp.coast,
                 });
-                const f = { m, s, sc, layer, brain: makeBrain(pers), ph: Math.random(), yaw: Math.cos(s.dir) > 0 ? 0 : Math.PI,
-                    puff: 0, look: [0, 0], sheet: null, shown: null, rot: null, mirror: null };
-                f.box = new Clutter.Actor({ reactive: false, opacity: layer ? 255 : FAR.opacity });
-                f.box.set_content_scaling_filters(Clutter.ScalingFilter.TRILINEAR, Clutter.ScalingFilter.LINEAR);
-                const D = Math.ceil(m.rmax * 2);
-                f.eyes = [0, 1].map(() => {
-                    const e = new St.DrawingArea({ width: D, height: D, reactive: false, visible: false });
-                    e.set_pivot_point(0.5, 0.5);
-                    e.connect('repaint', a => paintEye(a, m.iris));
-                    f.box.add_child(e);
-                    return e;
-                });
-                f.box.connect('destroy', () => { f.box = null; });  // parent torn down under us
-                fishLayers[layer].add_child(f.box);
+                const brain = makeBrain(pers);
+                brain.fed = rec.fed;
+                const f = { id, m, s, sc, layer, brain, ph: Math.random(), yaw: Math.cos(s.dir) > 0 ? 0 : Math.PI,
+                    puff: 0, look: [0, 0], cur: null, rot: null, mirror: null, tx: 0, ty: 0, it: null, acc: 0 };
+                f.bodies = m.sheets.map(sh => this._makeBody(sh, m, layer, fishLayers[layer]));
                 this._fish.push(f);
-                this._mates[layer].push({ f: s, b: f.brain });
+                this._mates[layer].push({ f: s, b: brain });
                 this._motion[layer].push(s);
             }
         }
         if (failed.length)
-            console.warn(`fishtank: fish sheets missing or unreadable, skipped: ${failed.join(', ')}`);
+            console.warn(`fishtank: fish art missing, skipped: ${failed.join(', ')}`);
+        this._flakes = [];
+        for (let i = 0; i < FLAKES; i++) {
+            const a = new St.Widget({ width: 7, height: 5, visible: false, style: 'background-color: #c9772f; border-radius: 3px;' });
+            fishLayers[1].add_child(a);
+            this._flakes.push({ a, x: 0, y: 0, x0: 0, life: 0, live: false, shown: false });
+        }
+        this._threats = [];
+        this._pulses = [0, 1, 2, 3].map(() => ({ x: 0, y: 0, w: 0, h: 0, t: 0 }));
+        this._seen = null;
+        const W = ctx.world;
+        this._notes = W.notifications;
+        this._idle = W.idle;
+        this._down = W.pointer.down;
+        this._attnT = 0;
+        this._attn = { x: b.x + b.w / 2, y: b.y + 20 };  // where the banner lands
+        this._n = 0;
+        this._wake = this._news = 0;  // one-shot signals held 2 ticks, so each half of the school sees them once
+        this._fedSum = -1;  // -1: save once soon, so first-seen fish keep their birthday
+        this._saved = 0;
+        this._c = { f: null, p: null, b, mates: null, dt: 0, rand: Math.random, threats: this._threats,
+            food: this._flakes, attn: null, attnNew: false, wake: false, drowsy: 1, lazy: 1 };
     }
 
-    tick(dt, t, pointer) {
+    // Sheets (main + puffer's puff) and the largest eye radius, so one eye texture fits every frame.
+    _species(name) {
+        const ctx = this._ctx, e = ctx.images[name];
+        if (!e?.eyes || !e.yaws) throw new Error('not in manifest');
+        const sheets = [ctx.sheet(name)];
+        if (e.puff && ctx.images[e.puff]?.eyes) sheets.push(ctx.sheet(e.puff));
+        let rmax = 1;
+        for (const sh of sheets) for (const fr of sh.eyes) for (const v of fr) rmax = Math.max(rmax, v[2]);
+        return { sheets, rows: e.yaws.length, rmax, iris: e.iris, len: e.len };
+    }
+
+    // One sprite: the sheet's clip box (scaled/rotated/mirrored about the anchor), eyes on top.
+    // Opacity goes on the sheet child and eyes, never on the box (would force an offscreen pass).
+    _makeBody(sh, m, layer, parent) {
+        const box = sh.make(), D = Math.ceil(m.rmax * 2);
+        box.reactive = false;
+        box.visible = false;
+        box.set_pivot_point(sh.anchor[0] / sh.w, sh.anchor[1] / sh.h);
+        const op = layer ? 255 : FAR.opacity;
+        const child = box.get_first_child();
+        child.opacity = op;
+        const eyes = [0, 1].map(() => {
+            const a = new St.DrawingArea({ width: D, height: D, reactive: false, visible: false, opacity: op });
+            a.set_pivot_point(0.5, 0.5);
+            a.connect('repaint', d => paintEye(d, m.iris));
+            box.add_child(a);
+            return { a, on: false, x: NaN, y: NaN, z: NaN, q: NaN };
+        });
+        parent.add_child(box);
+        return { sh, box, child, eyes, half: D / 2, i: -1 };
+    }
+
+    tick(dt, t) {
+        const W = this._ctx.world, P = W.pointer, c = this._c, b = this._b;
+        c.p = P.over ? P : null;
+        c.drowsy = drowsy(W.hour, W.idle);
+        c.lazy = lazy(W.hour, W.idle);
+        this._wake = this._idle > 60 && W.idle < 5 ? 2 : this._wake - 1;
+        c.wake = this._wake > 0;
+        this._idle = W.idle;
+        if (W.notifications > this._notes) { this._news = 2; this._attnT = 2; } else this._news--;
+        c.attnNew = this._news > 0;
+        this._notes = W.notifications;
+        c.attn = (this._attnT -= dt) > 0 ? this._attn : null;
+        this._threatsFrom(W.windows, dt);
+        if (P.down && !this._down && P.over) this._drop(P.x, P.y);
+        this._down = P.down;
+        c.food = this._sink(dt, t) ? this._flakes : null;
+        // brains think at 15 Hz, alternate fish each tick; bodies move every tick
+        let fed = 0, j = this._n++;
         for (const f of this._fish) {
-            if (!f.box) continue;
-            const s = f.s, it = think(f.brain, { f: s, p: pointer, b: this._b, mates: this._mates[f.layer], dt, rand: Math.random });
-            step(s, dt, it, this._b, this._motion[f.layer]);
-            this._body(f, dt, it);
+            const s = f.s;
+            f.acc += dt;
+            if (j++ % 2 === 0 || !f.it) {
+                c.f = s;
+                c.mates = this._mates[f.layer];
+                c.dt = f.acc;
+                f.acc = 0;
+                f.it = think(f.brain, c);
+            }
+            step(s, dt, f.it, b, this._motion[f.layer]);
+            this._body(f, dt, f.it);
+            fed += f.brain.fed;
         }
+        if (fed !== this._fedSum && t - this._saved > SAVE_EVERY) { this._fedSum = fed; this._saved = t; this._save(); }
+    }
+
+    // Moving windows, plus a 1 s pulse for any window that just appeared.
+    _threatsFrom(windows, dt) {
+        const th = this._threats, first = !this._seen;
+        th.length = 0;
+        this._seen ??= new Set();
+        for (const w of windows) {
+            if (w.moving) th.push(w);
+            if (w.id === undefined || this._seen.has(w.id)) continue;
+            this._seen.add(w.id);  // ponytail: grows with windows ever opened; prune if sessions run for months
+            const p = !first && this._pulses.find(q => q.t <= 0);
+            if (p) { p.x = w.x; p.y = w.y; p.w = w.w; p.h = w.h; p.t = 1; }
+        }
+        for (const p of this._pulses) if ((p.t -= dt) > 0) th.push(p);
+    }
+
+    _drop(x, y) {
+        let n = 3;
+        for (const k of this._flakes) {
+            if (k.live) continue;
+            k.live = true; k.life = FLAKE_LIFE; k.x0 = x + (Math.random() - 0.5) * 30; k.x = k.x0; k.y = y + (Math.random() - 0.5) * 20;
+            if (--n === 0) break;
+        }
+    }
+
+    _sink(dt, t) {
+        const floor = this._b.y + this._b.h;
+        let any = false;
+        for (const k of this._flakes) {
+            if (k.live && (k.life -= dt) <= 0) k.live = false;
+            if (k.live !== k.shown) (k.shown = k.live) ? k.a.show() : k.a.hide();
+            if (!k.live) continue;
+            any = true;
+            k.y = Math.min(floor, k.y + 20 * dt);
+            k.x = k.x0 + 4 * Math.sin(t * 1.3 + k.x0);
+            k.a.set_translation(k.x - 3, k.y - 2, 0);
+        }
+        return any;
+    }
+
+    _save() {
+        for (const f of this._fish) this._store[f.id].fed = f.brain.fed;
+        // ponytail: one file shared by every monitor's school; last writer wins on multi-monitor
+        this._ctx.store.set({ fish: this._store });
     }
 
     _body(f, dt, it) {
@@ -177,36 +243,37 @@ export class School {
         const mirror = f.yaw > Math.PI / 2, side = mirror ? Math.PI - f.yaw : f.yaw;
         // tail beat follows speed: quick on a burst, lazy while coasting, busy when nibbling
         f.ph += dt * (it.chomp ? 2.5 : 0.7 + 2.2 * Math.min(2, s.speed / s.cruise));
-        if (m.puff) f.puff += ((it.alarm ? 1 : 0) - f.puff) * Math.min(1, dt * (it.alarm ? 3 : 0.3));
-        const sh = m.puff && f.puff > 0.04 ? m.puff : m;
-        const row = Math.round(side / (Math.PI / 2) * (m.yaws.length - 1));
-        const col = sh === m ? Math.floor(f.ph * m.frames) % m.frames : Math.round(f.puff * (sh.frames - 1));
-        const box = f.box;
-        if (sh !== f.sheet) {
-            f.sheet = sh;
-            box.set_size(sh.fw, sh.fh);
-            box.set_pivot_point(sh.anchor[0] / sh.fw, sh.anchor[1] / sh.fh);
+        const puffy = f.bodies.length > 1;
+        if (puffy) f.puff += ((it.alarm ? 1 : 0) - f.puff) * Math.min(1, dt * (it.alarm ? 3 : 0.3));
+        const bd = f.bodies[puffy && f.puff > 0.04 ? 1 : 0], sh = bd.sh, box = bd.box;
+        if (bd !== f.cur) {
+            f.cur?.box.hide();
+            box.show();
+            f.cur = bd;
+            f.rot = f.mirror = null;
         }
-        const i = row * sh.frames + col;
-        if (i !== f.shown) {
-            f.shown = i;
-            box.content = sh.img[i];
-        }
+        const row = Math.round(side / (Math.PI / 2) * (m.rows - 1));
+        const col = bd === f.bodies[0] ? Math.floor(f.ph * sh.cols) % sh.cols : Math.round(f.puff * (sh.cols - 1));
+        const i = row * sh.cols + col;
+        if (i !== bd.i) bd.child.set_translation(-(i % sh.cols) * sh.w, -Math.floor(i / sh.cols) * sh.h, 0);  // = sh.show, minus its per-call array
+        bd.i = i;
         // nose dips into climbs and dives, only as much as the fish is side-on
         const pitch = Math.max(-0.45, Math.min(0.45, Math.atan2(Math.sin(s.dir), Math.abs(c)))) * Math.cos(side);
         const rot = Math.round((mirror ? -pitch : pitch) * 573) / 10;  // 0.1 degree steps, set only on change
-        if (rot !== f.rot) box.rotation_angle_z = f.rot = rot;
+        if (rot !== f.rot) box.set_rotation_angle(Clutter.RotateAxis.Z_AXIS, f.rot = rot);
         if (mirror !== f.mirror) box.set_scale((f.mirror = mirror) ? -f.sc : f.sc, f.sc);
-        box.set_translation(s.x - sh.anchor[0], s.y - sh.anchor[1], 0);  // translation: no relayout
-        this._pupils(f, sh.eyes[row][col], it, mirror, pitch, side, dt);
+        const tx = Math.round((s.x - sh.anchor[0]) * 4) / 4, ty = Math.round((s.y - sh.anchor[1]) * 4) / 4;
+        if (tx !== f.tx || ty !== f.ty) box.set_translation(f.tx = tx, f.ty = ty, 0);  // translation: no relayout
+        this._pupils(f, bd, sh.eyes[i], it, mirror, pitch, side, dt);
     }
 
-    // Pupils look at the brain's look target (cursor, buddy, food), else straight ahead.
-    _pupils(f, eyes, it, mirror, pitch, side, dt) {
+    // Pupils look at the brain's look target (cursor, buddy, food), else straight ahead. Every GI
+    // call is cached on the JS side and skipped when unchanged: this is the hottest loop.
+    _pupils(f, bd, eyes, it, mirror, pitch, side, dt) {
         const s = f.s;
         let lx = Math.cos(side) * 0.8, ly = 0;
         if (it.look) {
-            const dx = it.look.x - s.x, dy = it.look.y - s.y, d = Math.hypot(dx, dy) + 30;
+            const dx = it.look.x - s.x, dy = it.look.y - s.y, d = Math.sqrt(dx * dx + dy * dy) + 30;
             const a = mirror ? pitch : -pitch;  // undo the box rotation, then the mirror
             lx = (dx * Math.cos(a) - dy * Math.sin(a)) / d * (mirror ? -1 : 1);
             ly = (dx * Math.sin(a) + dy * Math.cos(a)) / d;
@@ -214,22 +281,20 @@ export class School {
         const k = Math.min(1, dt * 8);
         f.look[0] += (lx - f.look[0]) * k;
         f.look[1] += (ly - f.look[1]) * k;
-        f.eyes.forEach((e, j) => {
-            const v = eyes[j];
-            if (e.visible !== !!v) e.visible = !!v;
-            if (!v) return;
-            const [x, y, r, sq] = v, z = r / f.m.rmax;
-            if (e.scale_y !== z || e.scale_x !== z * sq) e.set_scale(z * sq, z);
-            e.set_translation(x - e.width / 2 + f.look[0] * r * 0.32 * sq, y - e.height / 2 + f.look[1] * r * 0.32, 0);
-        });
+        for (let j = 0; j < 2; j++) {
+            const e = bd.eyes[j], v = eyes[j], on = !!v;
+            if (e.on !== on) (e.on = on) ? e.a.show() : e.a.hide();
+            if (!on) continue;
+            const [x, y, r, sq] = v, z = Math.round(r / f.m.rmax * 50) / 50;  // 2 % steps: fewer rescales
+            if (e.z !== z || e.q !== sq) { e.a.set_scale(z * sq, z); e.z = z; e.q = sq; }
+            const ex = Math.round((x - bd.half + f.look[0] * r * 0.32 * sq) * 2) / 2;
+            const ey = Math.round((y - bd.half + f.look[1] * r * 0.32) * 2) / 2;
+            if (ex !== e.x || ey !== e.y) e.a.set_translation(e.x = ex, e.y = ey, 0);
+        }
     }
 
-    destroy() {
-        for (const f of this._fish) f.box?.destroy();
+    destroy() {  // actors go with ctx.root, which the host destroys
+        this._save();
         this._fish = [];
-        this._mates = [[], []];
-        this._motion = [[], []];
-        for (const n of this._held) release(n);
-        this._held = [];
     }
 }

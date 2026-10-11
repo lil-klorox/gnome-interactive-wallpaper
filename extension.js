@@ -1,142 +1,207 @@
+import Clutter from 'gi://Clutter';
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
-import St from 'gi://St';
-import Clutter from 'gi://Clutter';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
-import {Scene} from './scene.js';
-import {School} from './fish.js';
+import {SCENES} from './scenes/index.js';
+import {makeWorld, update, fpsMs} from './world.js';
+import {makeCtx, loadManifest} from './ctx.js';
+import {bytesOf, scaleFor} from './render.js';
+import {bgManagers, backgroundGroup, startingUp} from './shell.js';
 
-const FRAME_MS = 33;
+const SLOW_TICKS = 30;  // this many over-budget ticks in a row (net) and the scene is stopped
+const now = () => GLib.get_monotonic_time() / 1e6;
+const count = a => a.get_children().reduce((n, c) => n + 1 + count(c), 0);
 
 // Not shown while locked: no session-modes in metadata, so the shell disables us on lock.
-export default class FishtankExtension extends Extension {
+export default class InteractiveWallpaper extends Extension {
     enable() {
         this._tanks = [];
         this._sigs = [];
         this._timer = 0;
-        this._t0 = GLib.get_monotonic_time() / 1e6;
-        const lm = Main.layoutManager;
-        const rebuild = () => this._rebuild();
-        const update = () => this._update();
-        // ponytail: any of these re-checks every monitor; cheap, so no per-window tracking.
-        this._on(lm, 'monitors-changed', rebuild);
-        this._on(lm, 'startup-complete', rebuild);
+        this._ms = 33;
+        this._gen = 0;
+        this._t0 = now();
+        this._scene = null;
+        this._grab = null;
+        this._cache = new Map();
+        this._cancel = new Gio.Cancellable();
+        this.stats = {bytes: 0, k: 1, actors: 0, tickMs: 0, ticks: 0};
+        this._raw = {mx: 0, my: 0, mw: 0, mh: 0, px: 0, py: 0, bare: false, down: false, rects: [],
+            grabbing: null, idleMs: 0, hour: 0, dark: false, notes: 0};
+        this._settings = this.getSettings();
+        this._iface = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
+        const dark = () => (this._raw.dark = this._iface.get_string('color-scheme') === 'prefer-dark');
+        dark();
+        const lm = Main.layoutManager, update = () => this._update();
+        this._on(this._settings, 'changed::scene', () => this._load());
+        this._on(this._iface, 'changed::color-scheme', dark);
+        // ponytail: any of these re-checks every monitor and window; cheap, so no per-window tracking.
+        this._on(lm, 'monitors-changed', () => this._rebuild());
+        this._on(lm, 'startup-complete', () => this._load());
         this._on(global.display, 'restacked', update);
         this._on(global.display, 'in-fullscreen-changed', update);
         this._on(global.display, 'window-entered-monitor', update);
+        this._on(global.display, 'grab-op-begin', (_d, w) => {
+            this._grab = w;
+            this._raw.grabbing = w?.get_id() ?? null;
+        });
+        this._on(global.display, 'grab-op-end', () => {
+            this._grab = this._raw.grabbing = null;
+            this._update();
+        });
         this._on(global.window_manager, 'size-changed', update);
         this._on(global.window_manager, 'minimize', update);
         this._on(global.window_manager, 'unminimize', update);
         this._on(global.workspace_manager, 'active-workspace-changed', update);
         this._on(Main.overview, 'showing', update);
         this._on(Main.overview, 'hidden', update);
-        if (!lm._startingUp)
-            this._rebuild();
+        // Count notifications only; the objects themselves are never kept.
+        const hook = src => src.connectObject('notification-added', () => this._raw.notes++, this);
+        Main.messageTray.getSources().forEach(hook);
+        this._on(Main.messageTray, 'source-added', (_t, src) => hook(src));
+        if (!startingUp())
+            this._load();
     }
 
     disable() {
+        this._cancel.cancel();
         for (const [obj, id] of this._sigs)
             obj.disconnect(id);
+        Main.messageTray.getSources().forEach(s => s.disconnectObject(this));
         this._stop();
         this._clear();
-        this._sigs = this._tanks = null;
+        this._sigs = this._tanks = this._cache = this._cancel = this._scene = this._grab = null;
+        this._settings = this._iface = this._raw = this.stats = null;
     }
 
     _on(obj, sig, fn) {
         this._sigs.push([obj, obj.connect(sig, fn)]);
     }
 
+    // Import the chosen scene (unknown id = the first one) and read its manifest, then mount it.
+    async _load() {
+        const gen = ++this._gen, cancel = this._cancel;
+        this._clear();
+        this._scene = null;
+        const want = this._settings.get_string('scene');
+        const id = Object.hasOwn(SCENES, want) ? want : Object.keys(SCENES)[0];
+        try {
+            const mod = await SCENES[id].load();
+            if (cancel.is_cancelled() || gen !== this._gen)
+                return;
+            const dir = this.dir.get_child('scenes').get_child(id);
+            this._scene = {id, dir, man: loadManifest(dir), k: 0, create: mod.default};
+            this._rebuild();
+        } catch (e) {
+            logError(e, `interactive-wallpaper: scene ${id} failed to load`);
+        }
+    }
+
     _clear() {
         for (const t of this._tanks)
-            t.widget?.destroy();
+            t?.root?.destroy();
         this._tanks = [];
     }
 
     _rebuild() {
         this._clear();
-        Main.layoutManager._bgManagers.forEach((_, i) => this._build(i));
+        const sc = this._scene;
+        if (!sc)
+            return;
+        const mons = Main.layoutManager.monitors;
+        const k = scaleFor(Math.max(...mons.map(m => m.height)), sc.man.ref, bytesOf(sc.man.images, 1));
+        if (k !== sc.k) {  // textures are decoded at k, so a new k needs fresh ones
+            sc.k = this.stats.k = k;
+            this.stats.bytes = bytesOf(sc.man.images, k);
+            this._cache.clear();
+            console.log(`interactive-wallpaper: ${sc.id} textures ${(this.stats.bytes / 1e6).toFixed(1)} MB at k=${k.toFixed(3)}`);
+        }
+        bgManagers().forEach((mgr, i) => this._build(mgr, mons[i], i));
         this._update();
     }
 
-    _build(i) {
-        const mgr = Main.layoutManager._bgManagers[i];
-        const mon = Main.layoutManager.monitors[i];
+    _build(mgr, mon, i) {
+        const sc = this._scene;
         // Non-reactive: the pointer is polled in _tick, so desktop clicks/menus are untouched.
-        const widget = new St.Widget({width: mon.width, height: mon.height});
-        const t = {widget, monitor: mon.index, pointer: {x: 0, y: 0, speed: 0}, over: false};
+        const root = new Clutter.Actor({width: mon.width, height: mon.height});
+        const t = {root, mon, world: makeWorld(), scene: null, slow: 0, paused: false, dead: false};
         this._tanks[i] = t;
-        // Fires on disable, on rebuild, and when the shell destroys the bg actor under us.
-        widget.connect('destroy', () => {
+        // Fires on disable, on rebuild, on the watchdog, and when the shell destroys the bg actor under us.
+        root.connect('destroy', () => {
             mgr.disconnect(t.mgrId);
             t.dead = true;
-            t.widget = null;
+            t.root = null;
             try {
-                t.school?.destroy();
                 t.scene?.destroy();
             } catch (e) {
-                logError(e, 'fishtank: teardown');
+                logError(e, `interactive-wallpaper: ${sc.id} teardown`);
             }
         });
         // Wallpaper changed: shell swaps in a new bg actor, the old one fades out and dies.
         t.mgrId = mgr.connect('changed', () => {
-            widget.destroy();
-            this._build(i);
+            root.destroy();
+            this._build(mgr, mon, i);
             this._update();
         });
-        mgr.backgroundActor.add_child(widget);
+        mgr.backgroundActor.add_child(root);
         try {
-            t.scene = new Scene(widget, mon.width, mon.height);
-            t.school = new School(t.scene.fishLayers, t.scene.swimBounds);
+            t.scene = sc.create(makeCtx(sc, this._cache, this._cancel, root, mon.width, mon.height, t.world));
+            this.stats.actors = count(root);
+            if (this.stats.actors > 300)
+                console.warn(`interactive-wallpaper: ${sc.id} built ${this.stats.actors} actors`);
         } catch (e) {
-            logError(e, 'fishtank: build');
+            logError(e, `interactive-wallpaper: ${sc.id} build`);
             t.dead = true;
         }
     }
 
-    // Polled, not event-driven: motion events never reach the background when a desktop-icons
-    // or blur extension sits above it. "Over" = the topmost thing under the cursor is the desktop.
-    _pointer(dt) {
-        const [x, y] = global.get_pointer();
-        const a = Main.overview.visible ? null : global.stage.get_actor_at_pos(Clutter.PickMode.REACTIVE, x, y);
+    // "Bare" = the topmost reactive thing under the cursor is the desktop. Polled, not event-driven:
+    // motion events never reach the background when a desktop-icons or blur extension sits above it.
+    _bare(x, y) {
+        if (Main.overview.visible)
+            return false;
+        const a = global.stage.get_actor_at_pos(Clutter.PickMode.REACTIVE, x, y);
         let w = a;
         while (w && !(w instanceof Meta.WindowActor))
             w = w.get_parent();
-        const bare = !!a && (a === global.stage || Main.layoutManager._backgroundGroup.contains(a) ||
+        return !!a && (a === global.stage || backgroundGroup().contains(a) ||
             w?.meta_window?.get_window_type() === Meta.WindowType.DESKTOP);
-        for (const t of this._tanks) {
-            const m = Main.layoutManager.monitors[t.monitor], p = t.pointer;
-            const lx = x - m.x, ly = y - m.y;
-            const over = bare && lx >= 0 && ly >= 0 && lx < m.width && ly < m.height;
-            p.speed = over && t.over ? 0.5 * p.speed + 0.5 * Math.hypot(lx - p.x, ly - p.y) / dt : 0;
-            p.x = lx;
-            p.y = ly;
-            t.over = over;
-        }
     }
 
+    // On window/overview changes: refresh window rects and which monitors are covered.
     _update() {
-        const covered = new Set();
-        if (!Main.overview.visible) {
-            for (const w of global.workspace_manager.get_active_workspace().list_windows()) {
-                if (!w.showing_on_its_workspace())
-                    continue;
-                const max = w.is_maximized?.() ?? w.get_maximized() === Meta.MaximizeFlags.BOTH;
-                if (max || w.is_fullscreen())
-                    covered.add(w.get_monitor());
-            }
+        const covered = new Set(), rects = [], ov = Main.overview.visible;
+        for (const w of global.workspace_manager.get_active_workspace().list_windows()) {
+            if (!w.showing_on_its_workspace() || w.get_window_type() === Meta.WindowType.DESKTOP)
+                continue;
+            const r = w.get_frame_rect();
+            rects.push({x: r.x, y: r.y, w: r.width, h: r.height, id: w.get_id()});
+            const max = w.is_maximized?.() ?? w.get_maximized() === Meta.MaximizeFlags.BOTH;
+            if (max || w.is_fullscreen())
+                covered.add(w.get_monitor());
         }
+        this._raw.rects = rects;
+        this._restacked = true;
         let live = false;
         for (const t of this._tanks) {
-            t.paused = covered.has(t.monitor);
+            if (!t)
+                continue;
+            t.paused = ov || covered.has(t.mon.index);
             live ||= !t.dead && !t.paused;
         }
         if (live && !this._timer) {
-            this._last = GLib.get_monotonic_time() / 1e6;
-            this._timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT_IDLE, FRAME_MS, () => this._tick());
+            this._last = now();
+            this._arm(this._ms);
         } else if (!live) {
             this._stop();
         }
+    }
+
+    _arm(ms) {
+        this._ms = ms;
+        this._timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT_IDLE, ms, () => this._tick());
     }
 
     _stop() {
@@ -145,26 +210,59 @@ export default class FishtankExtension extends Extension {
         this._timer = 0;
     }
 
+    _fill() {
+        const r = this._raw, [x, y, mods] = global.get_pointer(), d = new Date();
+        if (x !== r.px || y !== r.py || this._restacked)  // a stage pick is most of the host's tick
+            r.bare = this._bare(x, y);
+        this._restacked = false;
+        r.px = x;
+        r.py = y;
+        r.down = !!(mods & Clutter.ModifierType.BUTTON1_MASK);
+        r.idleMs = global.backend.get_core_idle_monitor().get_idletime();
+        r.hour = d.getHours() + d.getMinutes() / 60;
+        if (this._grab) {  // one rect per tick while a window is dragged
+            const g = this._grab.get_frame_rect(), o = r.rects.find(q => q.id === r.grabbing);
+            if (o)
+                Object.assign(o, {x: g.x, y: g.y, w: g.width, h: g.height});
+        }
+    }
+
     _tick() {
-        const now = GLib.get_monotonic_time() / 1e6;
-        const dt = Math.min(now - this._last, 0.1);
-        this._last = now;
+        const t0 = now(), dt = Math.min(t0 - this._last, 0.1), raw = this._raw, limit = 2 * this._ms;
+        this._last = t0;
+        this._fill();
         let live = false;
-        this._pointer(Math.max(dt, 0.001));
         for (const t of this._tanks) {
-            if (t.dead || t.paused)
+            if (!t || t.dead || t.paused)
                 continue;
+            raw.mx = t.mon.x;
+            raw.my = t.mon.y;
+            raw.mw = t.mon.width;
+            raw.mh = t.mon.height;
+            update(t.world, raw, dt);
+            const s = now();
             try {
-                t.scene.tick(dt, now - this._t0);
-                t.school.tick(dt, now - this._t0, t.over ? t.pointer : null);
+                t.scene.tick(dt, t0 - this._t0);
+                t.slow = (now() - s) * 1000 > limit ? t.slow + 1 : Math.max(0, t.slow - 1);
+                if (t.slow > SLOW_TICKS)
+                    throw new Error(`ticks keep taking over ${limit} ms`);
                 live = true;
             } catch (e) {
-                logError(e, 'fishtank: tank stopped');
-                t.dead = true;
+                logError(e, `interactive-wallpaper: ${this._scene.id} stopped`);
+                t.root.destroy();
             }
         }
-        if (!live)
+        const st = this.stats;
+        st.tickMs = 0.95 * st.tickMs + 0.05 * (now() - t0) * 1000;
+        st.ticks++;
+        if (!live) {
             this._timer = 0;
-        return live ? GLib.SOURCE_CONTINUE : GLib.SOURCE_REMOVE;
+            return GLib.SOURCE_REMOVE;
+        }
+        const ms = fpsMs(raw.idleMs / 1000);
+        if (ms === this._ms)
+            return GLib.SOURCE_CONTINUE;
+        this._arm(ms);  // fps policy changed: a new source replaces this one
+        return GLib.SOURCE_REMOVE;
     }
 }

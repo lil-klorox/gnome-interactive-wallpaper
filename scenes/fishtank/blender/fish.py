@@ -1,9 +1,8 @@
 # Fish sprite sheets. Each species is modeled from numpy-built meshes (lofted body, fanned fins
 # with real rays, eyes, lips, barbels, spikes) with numpy-painted textures, swum with a sine
 # body wave, and rendered with Cycles as swim-cycle frames x yaw angles (profile -> front; the
-# runtime mirrors the other half). Writes assets/fish/<name>.png + <name>.json (+ puffer -puff).
+# runtime mirrors the other half). Writes assets/<name>.png + its manifest entry (+ puffer -puff).
 # Run: ~/opt/blender/blender -b --factory-startup -P blender/fish.py -- [species ...] [--preview DIR]
-import json
 import math
 import os
 import sys
@@ -498,14 +497,14 @@ def render_sheet(fish, ppm, tag, puffs, phases, tmp, preview=None):
     anchor = [round((0 - ctr[0]) * ppm + W / 2, 2), round(H / 2 + (ctr[1] - 0) * ppm, 2)]
     if preview:
         return sheet, W, H
-    out = os.path.join(common.ASSETS, 'fish', f'{tag}.png')
-    os.makedirs(os.path.dirname(out), exist_ok=True)
+    out = os.path.join(common.ASSETS, f'{tag}.png')
     im = bpy.data.images.new(tag, sheet.shape[1], sheet.shape[0], alpha=True)
     im.pixels.foreach_set(sheet[::-1].ravel())
     im.filepath_raw = out
     im.file_format = 'PNG'
     im.save()
-    return dict(fw=W, fh=H, frames=cols, anchor=anchor, eyes=eyes)
+    # rows = yaws, cols = frames; eyes flattened row-major so eyes[i] belongs to frame i
+    return dict(w=W, h=H, cols=cols, n=cols * len(YAWS), anchor=anchor, eyes=[e for r in eyes for e in r])
 
 
 def eye_info(fish, ph, puff, yaw, ctr, W, H, ppm):
@@ -561,13 +560,13 @@ def run(name, preview=None):
             im.file_format = 'PNG'
             im.save()
             return
-        man = dict(name=name, iris=fish.iris, yaws=YAWS, len=round(fish.px * SIZE))
+        man = dict(iris=fish.iris, yaws=YAWS, len=round(fish.px * SIZE))
         man.update(render_sheet(fish, ppm, name, [0.0], [i / FRAMES for i in range(FRAMES)], tmp))
         if fish.inflate:
-            man['puff'] = render_sheet(fish, ppm, name + '-puff', [i / (PUFFS - 1) for i in range(PUFFS)], [0.0], tmp)
-    with open(os.path.join(common.ASSETS, 'fish', f'{name}.json'), 'w') as f:
-        json.dump(man, f, separators=(',', ':'))
-    print(f'fish: {name} {man["fw"]}x{man["fh"]} x {man["frames"]} x {len(YAWS)}')
+            man['puff'] = name + '-puff'
+            common.manifest(name + '-puff', render_sheet(fish, ppm, name + '-puff', [i / (PUFFS - 1) for i in range(PUFFS)], [0.0], tmp))
+    common.manifest(name, man)
+    print(f'fish: {name} {man["w"]}x{man["h"]} x {man["cols"]} x {len(YAWS)}')
 
 
 # ---------- species ----------

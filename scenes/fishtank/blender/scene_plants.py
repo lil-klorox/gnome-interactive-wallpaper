@@ -178,7 +178,7 @@ def fade_shadow(name, base, R):
     """The floor catches the whole canopy's shadow; keep only a soft pool around the roots so
     the sprite has no shadow edge where it was cropped. Pure-shadow pixels are the black ones."""
     import numpy as np
-    path = os.path.join(ASSETS, 'scene', name + '.png')
+    path = os.path.join(ASSETS, name + '.png')
     img = bpy.data.images.load(path)
     W, H = img.size
     px = np.array(img.pixels[:], dtype=np.float32).reshape(H, W, 4)

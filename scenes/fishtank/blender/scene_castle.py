@@ -1,5 +1,5 @@
 # Castle: three round towers and a curtain wall built block by block, arched windows and door,
-# a shingled cone roof, flags, moss and grime. Renders assets/scene/castle.png.
+# a shingled cone roof, flags, moss and grime. Renders assets/castle.png.
 import math, os, random, sys
 import bmesh
 import bpy

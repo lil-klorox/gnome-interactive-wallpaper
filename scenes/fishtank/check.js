@@ -1,5 +1,6 @@
 // Self-check for brain.js + steer.js: `gjs -m check.js` or `node check.js`.
-import { makeBrain, think, PERSONALITY, NEAR, FAST } from './brain.js';
+import { makeBrain, think, PERSONALITY, NEAR, FAST, SEE, drowsy, lazy } from './brain.js';
+import { frameOffset } from '../../render.js';
 import { makeFish, step } from './steer.js';
 
 let seed = 1;
@@ -8,7 +9,7 @@ const ok = (c, msg) => { if (!c) throw new Error('FAIL: ' + msg); };
 const B = { x: 0, y: 0, w: 1600, h: 900 }, dt = 1 / 30;
 const dist = (f, p) => Math.hypot(f.x - p.x, f.y - p.y);
 const fish = (x, y, pers) => ({ f: makeFish({ x, y, cruise: 60 }, rand), b: makeBrain({ ...PERSONALITY.clown, ...pers }, rand) });
-const run = (o, p, mates = [o]) => step(o.f, dt, think(o.b, { f: o.f, p, b: B, mates, dt, rand }), B, mates.map(m => m.f), rand);
+const run = (o, p, mates = [o], w = {}) => step(o.f, dt, think(o.b, { f: o.f, p, b: B, mates, dt, rand, ...w }), B, mates.map(m => m.f), rand);
 
 // flee: a skittish fish next to the cursor ends up well away from it, then calms down
 let o = fish(800, 450, { curious: 0 }), p = { x: 760, y: 450, speed: 0 };
@@ -79,4 +80,49 @@ for (let i = 0; i < 20000; i++) {
         ok(g.x >= 20 && g.x <= 1580 && g.y >= 20 && g.y <= 880 && Number.isFinite(g.dir + g.speed), 'stays in bounds');
     }
 }
+// a dragged window over a fish: it flees away from the window's centre
+o = fish(800, 450, { curious: 1 });
+const win = { x: 700, y: 400, w: 200, h: 100, moving: true };
+run(o, null, [o], { threats: [win] });
+ok(o.b.state === 'flee', 'moving window scares');
+for (let i = 0; i < 60; i++) run(o, null, [o], { threats: [win] });
+ok(dist(o.f, { x: 800, y: 450 }) > 150, 'flees the window');
+
+// food: a flake within SEE pulls a fish in and gets eaten within 10 s
+o = fish(800, 450, {});
+const flake = { x: 800 + SEE * 0.8, y: 500, live: true };
+run(o, null, [o], { food: [flake] });
+ok(o.b.state === 'feed', 'flake noticed');
+for (let i = 0; i < 300 && flake.live; i++) run(o, null, [o], { food: [flake] });
+ok(!flake.live && o.b.fed === 1, 'flake eaten');
+
+// tameness: 100 flakes eaten halves the chance a slow cursor spooks a fish
+const fleeRate = fed => {
+    let n = 0;
+    for (let i = 0; i < 4000; i++) {
+        const q = fish(800, 450, { curious: 0.5 });
+        q.b.fed = fed;
+        think(q.b, { f: q.f, p: { x: 760, y: 450, speed: 0 }, b: B, mates: [q], dt, rand });
+        n += q.b.state === 'flee';
+    }
+    return n / 4000;
+};
+const r0 = fleeRate(0), r1 = fleeRate(100);
+ok(Math.abs(r1 / r0 - 0.5) < 0.1, `fed fish half as skittish (${r0} -> ${r1})`);
+
+// night: more time resting than by day
+const restTime = hour => {
+    const duo = [fish(400, 300, {}), fish(900, 500, {})];
+    let n = 0;
+    for (let i = 0; i < 30 * 600; i++) for (const q of duo) {
+        run(q, null, duo, { drowsy: drowsy(hour, 0), lazy: lazy(hour, 0) });
+        n += q.b.state === 'rest';
+    }
+    return n;
+};
+const day = restTime(12), nightRest = restTime(23);
+ok(nightRest > day * 1.5, `rests more at night (${day} -> ${nightRest})`);
+
+// sprite frame i = yaw row * cols + phase col, row-major in the sheet, as fish.js indexes it
+ok(String(frameOffset({ w: 116, h: 165, cols: 12 }, 3 * 12 + 5)) === String([5 * 116, 3 * 165]), 'frame index is row-major');
 console.log('brain + steer ok');

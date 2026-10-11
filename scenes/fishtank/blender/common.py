@@ -5,6 +5,7 @@ import json
 import math
 import os
 import random
+import struct
 import bpy
 import numpy as np
 from bpy_extras.object_utils import world_to_camera_view
@@ -12,6 +13,7 @@ from mathutils import Vector
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSETS = os.path.join(ROOT, 'assets')
+REF = 1440          # screen height the art is drawn for (manifest 'ref')
 PPU = 100           # scenery: pixels per world unit at the 1440 px reference height
 WATER = (0.03, 0.16, 0.24)  # haze colour (linear) that far things fade into
 BACKDROP = [(0.0, (0.004, 0.035, 0.06)), (0.35, (0.012, 0.085, 0.13)),  # water gradient, bottom to top
@@ -342,11 +344,11 @@ def ground(size=8.0, z=0.0, soft=3.0, power=3000):
 
 
 def sprite(name, points=None, pad=6, cut=8, extra=None, crop=True):
-    """Render assets/scene/<name>.png cropped to its visible pixels, and record its size plus
-    named world points (anchors/pivots/emitters) in pixel coords in assets/scene/manifest.json.
+    """Render assets/<name>.png cropped to its visible pixels, and record its size plus
+    named world points (anchors/pivots/emitters) in pixel coords in assets/manifest.json.
     crop=False keeps the full frame: animation frames are cropped together later by crop_frames."""
     s = bpy.context.scene
-    render(f'scene/{name}.png')
+    render(f'{name}.png')
     W, H = s.render.resolution_x, s.render.resolution_y
     ent = {'w': W, 'h': H}
     for k, co in (points or {}).items():
@@ -360,7 +362,7 @@ def sprite(name, points=None, pad=6, cut=8, extra=None, crop=True):
 def crop_frames(names, pad=6, cut=8):
     """Crop same-size PNGs to the union of their visible pixels (so frames still overlay), shift
     their manifest points to match and record the crop offset as ox/oy."""
-    paths = [os.path.join(ASSETS, 'scene', n + '.png') for n in names]
+    paths = [os.path.join(ASSETS, n + '.png') for n in names]
     pxs = []
     for p in paths:
         img = bpy.data.images.load(p)
@@ -372,7 +374,6 @@ def crop_frames(names, pad=6, cut=8):
     ys, xs = rows, cols
     x0, x1 = max(0, xs.min() - pad), min(W, xs.max() + 1 + pad)
     y0, y1 = max(0, ys.min() - pad), min(H, ys.max() + 1 + pad)
-    mp = os.path.join(ASSETS, 'scene', 'manifest.json')
     ents = []
     for n, p, px in zip(names, paths, pxs):
         out = bpy.data.images.new(n, int(x1 - x0), int(y1 - y0), alpha=True)
@@ -380,7 +381,7 @@ def crop_frames(names, pad=6, cut=8):
         out.filepath_raw, out.file_format = p, 'PNG'
         out.save()
         bpy.data.images.remove(out)
-        ent = json.load(open(mp)).get(n, {})
+        ent = json.load(open(os.path.join(ASSETS, 'manifest.json')))['images'].get(n, {})
         for k, v in ent.items():
             if isinstance(v, list) and len(v) == 2:
                 ent[k] = [round(v[0] - float(x0), 1), round(v[1] - float(y0), 1)]
@@ -392,16 +393,21 @@ def crop_frames(names, pad=6, cut=8):
 
 
 def manifest(name, ent):
-    mp = os.path.join(ASSETS, 'scene', 'manifest.json')
-    with open(mp, 'a+') as f:  # several scripts may render at once
+    """Set images[name] in assets/manifest.json ({ref, images}); px = the PNG's real size."""
+    png = os.path.join(ASSETS, name + '.png')
+    if os.path.exists(png):
+        with open(png, 'rb') as f:
+            ent['px'] = list(struct.unpack('>II', f.read(24)[16:24]))  # IHDR width, height
+    with open(os.path.join(ASSETS, 'manifest.json'), 'a+') as f:  # several scripts may render at once
         fcntl.flock(f, fcntl.LOCK_EX)
         f.seek(0)
         txt = f.read()
-        data = json.loads(txt) if txt.strip() else {}
-        data[name] = ent
+        data = json.loads(txt) if txt.strip() else {'images': {}}
+        data['ref'] = REF
+        data['images'][name] = ent
         f.seek(0)
         f.truncate()
-        f.write(json.dumps(data, indent=1, sort_keys=True))
+        f.write(json.dumps(data, separators=(',', ':'), sort_keys=True))
 
 
 def seed(n):

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.interactive-wallpaper" path="/org/gnome/shell/extensions/interactive-wallpaper/">
+    <key name="scene" type="s">
+      <default>'fishtank'</default>
+      <summary>Scene shown on the desktop</summary>
+    </key>
+  </schema>
+</schemalist>

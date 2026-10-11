@@ -1,21 +1,12 @@
 // Tank scenery: Blender-rendered sprites from assets/scene (made by blender/scene_*.py), composed into
 // parallax layers. Art is uploaded once; motion only moves, rotates or swaps the content of actors.
 import Clutter from 'gi://Clutter';
-import Cogl from 'gi://Cogl';
-import GdkPixbuf from 'gi://GdkPixbuf';
-import GLib from 'gi://GLib';
 import St from 'gi://St';
-import System from 'system';
+import { night } from './brain.js';
 
-const DIR = GLib.filename_from_uri(GLib.uri_resolve_relative(import.meta.url, 'assets/scene/', GLib.UriFlags.NONE))[0];
 const TAU = Math.PI * 2;
-const REF = 1440;        // art is rendered for a 1440 px tall screen; everything below is in those pixels
 const SAND = 1150;       // ref row of the sand's back edge
 const DRIFT = 22;        // parallax: how far (ref px) the nearest layer sways with the slow camera bob
-let warned = false;
-const cache = new Map();  // textures shared by every monitor's scene, freed when the last scene goes
-let users = 0;
-const warn = (e, what) => { if (!warned) logError(e, `fishtank: scenery ${what}`); warned = true; };
 
 // Props on the sand, by screen x fraction and the ref row their base sits on; sorted back to front.
 const PROPS = [
@@ -26,50 +17,51 @@ const PROPS = [
 const SPECIES = ['valli', 'valli', 'sword', 'sword', 'jfern', 'cabomba', 'ludwigia', 'anubias', 'anubias'];
 const MIDPLANTS = [0.025, 0.2, 0.265, 0.345, 0.545, 0.67, 0.765, 0.905, 0.985];  // in the gaps between props
 
-function upload(pb) {
-    const img = St.ImageContent.new_with_preferred_size(pb.width, pb.height);
-    const args = [pb.get_pixels(), pb.has_alpha ? Cogl.PixelFormat.RGBA_8888 : Cogl.PixelFormat.RGB_888, pb.width, pb.height, pb.rowstride];
-    let ctx = null;
-    try { ctx = global.stage.context.get_backend().get_cogl_context(); } catch {}
-    if (!(ctx ? img.set_data(ctx, ...args) : img.set_data(...args)))  // GNOME 48+ wants the Cogl context first
-        throw new Error('set_data failed');
-    return img;
-}
-
-export class Scene {
-    constructor(root, w, h) {
+// Ref px are the art's own pixels (manifest ref = screen height it was drawn for).
+export class Tank {
+    constructor(ctx) {
+        const { w, h } = ctx;
+        this._ctx = ctx;
+        this._m = ctx.images;
         this._anims = [];
         this._slow = [];  // slow sway: each runs every third tick (a third of the cost, steps stay far below a pixel)
         this._n = 0;
         this._pool = [];
-        this._live = true;
-        users++;
-        this._box = new Clutter.Actor({width: w, height: h, clip_to_allocation: true});
-        root.add_child(this._box);
-        this._box.connect('destroy', () => { this._box = null; });
-        this.fishLayers = [0, 1].map(() => new Clutter.Actor({width: w, height: h}));
-        this.swimBounds = {x: 0, y: h * 0.06, w, h: h * 0.8};
+        this._rays = 1;   // light ray strength, 0 at night
+        this._notes = ctx.world.notifications;
+        this._box = new Clutter.Actor({ width: w, height: h, clip_to_allocation: true });
+        ctx.root.add_child(this._box);
+        this.fishLayers = [0, 1].map(() => new Clutter.Actor({ width: w, height: h }));
+        this.swimBounds = { x: 0, y: h * 0.06, w, h: h * 0.8 };
         try {
             this._build(w, h);
         } catch (e) {  // never take the shell down over scenery: keep whatever got built, plus the fish
-            warn(e, 'failed, showing what loaded');
+            logError(e, 'fishtank: scenery failed, showing what loaded');
             if (!this._box.get_n_children())
-                this._box.add_child(new St.Widget({width: w, height: h,
-                    style: 'background-gradient-direction: vertical; background-gradient-start: #1d5d6c; background-gradient-end: #031a26;'}));
+                this._box.add_child(new St.Widget({ width: w, height: h,
+                    style: 'background-gradient-direction: vertical; background-gradient-start: #1d5d6c; background-gradient-end: #031a26;' }));
             this.fishLayers.forEach(l => l.get_parent() || this._box.add_child(l));
         }
-        this._pb = null;
-        System.gc();  // decoded PNGs are only referenced from JS wrappers now; free them
+        // Tints over everything, fixed colours, only opacity changes: night/dark/idle dim, dawn/dusk warm.
+        this._tint = [['#06102a', 0], ['#ff8a3c', 0]].map(([col, v]) => {
+            const a = new St.Widget({ width: w, height: h, opacity: 0, style: `background-color: ${col};` });
+            this._box.add_child(a);
+            return { a, v, o: 0 };
+        });
     }
 
     _build(w, h) {
-        const s = h / REF, W = w / s;
-        this._m = JSON.parse(new TextDecoder().decode(GLib.file_get_contents(DIR + 'manifest.json')[1]));
+        const REF = this._ctx.ref, s = h / REF, W = w / s;
+        this._W = W;
         // one scaled container per depth; k = how much it moves with the camera bob
         const layer = k => {
             const a = new Clutter.Actor({scale_x: s, scale_y: s});
             this._box.add_child(a);
-            if (k) this._anims.push(t => { a.translation_x = s * k * DRIFT * Math.sin(t * TAU / 47); });
+            let last = NaN;  // quarter-pixel steps, set only on change
+            if (k) this._anims.push(t => {
+                const x = Math.round(s * k * DRIFT * Math.sin(t * TAU / 47) * 4) / 4;
+                if (x !== last) a.set_translation(last = x, 0, 0);
+            });
             return a;
         };
         const sky = layer(0);
@@ -80,7 +72,7 @@ export class Scene {
             if (!a) break;
             a.set_pivot_point(0.5, 0);
             const base = 8 + 6 * Math.sin(i * 5.1), ph = i * 1.7;
-            this._slow.push(t => { a.rotation_angle_z = base + 2.5 * Math.sin(t * 0.06 + ph); a.opacity = 110 + 90 * Math.sin(t * 0.11 + ph); });
+            this._slow.push(t => { a.set_rotation_angle(Clutter.RotateAxis.Z_AXIS, base + 2.5 * Math.sin(t * 0.06 + ph)); a.set_opacity(Math.round(this._rays * (110 + 90 * Math.sin(t * 0.11 + ph)))); });
         }
         for (const [n, k] of [['far0', 0.2], ['far1', 0.35], ['far2', 0.5]]) {
             const m = this._m[n];
@@ -121,26 +113,14 @@ export class Scene {
             this._plant(front, r() * W, REF + 10, 0.8 + r() * 0.5, 3, 'hair');
     }
 
-    // Texture by sprite name (optionally a row band of it, in PNG pixels), uploaded once.
-    _img(name, y0 = 0, y1 = 0) {
-        const key = `${name}:${y0}:${y1}`;
-        if (cache.has(key)) return cache.get(key);
-        let img = null;
-        try {
-            let pb = this._pb?.name === name ? this._pb.pb : GdkPixbuf.Pixbuf.new_from_file(`${DIR}${name}.png`);
-            this._pb = {name, pb};
-            if (y1) pb = pb.new_subpixbuf(0, y0, pb.width, y1 - y0);
-            img = upload(pb);
-        } catch (e) {
-            warn(e, `art ${name} missing`);
-        }
-        cache.set(key, img);
-        return img;
+    // Texture by sprite name; null when the manifest lacks it.
+    _img(name) {
+        return this._m[name] ? this._ctx.image(name).content : null;
     }
 
     _actor(parent, img, props) {
-        const a = new Clutter.Actor({content: img, ...props});
-        a.set_content_scaling_filters(Clutter.ScalingFilter.TRILINEAR, Clutter.ScalingFilter.LINEAR);
+        const a = new Clutter.Actor({ content: img, ...props });
+        a.set_content_scaling_filters(Clutter.ScalingFilter.LINEAR, Clutter.ScalingFilter.LINEAR);
         parent.add_child(a);
         return a;
     }
@@ -161,16 +141,17 @@ export class Scene {
         return a;
     }
 
-    // Horizontally repeating strip (side-by-side copies sharing one texture; St.ImageContent can't
-    // repeat); vx = drift speed in ref px/s.
+    // Horizontally repeating strip: side-by-side copies sharing one texture (content repeat tiles at
+    // the decoded size, not the ref size); vx = drift speed in ref px/s, which needs a moving holder.
     _tile(parent, name, x, y, width, vx) {
         const m = this._m[name], img = m && this._img(name);
         if (!img) return null;
-        const a = new Clutter.Actor({x, y});
-        parent.add_child(a);
-        for (let i = 0; i * m.w < width + (vx ? m.w : 0); i++)
-            this._actor(a, img, {x: i * m.w, width: m.w, height: m.h});
-        if (vx) this._anims.push(t => { a.translation_x = -(((t * vx) % m.w + m.w) % m.w); });
+        const a = vx ? new Clutter.Actor({ x, y }) : parent;
+        if (vx) parent.add_child(a);
+        const x0 = vx ? 0 : x, y0 = vx ? 0 : y, n = Math.ceil((width + (vx ? m.w : 0)) / m.w);
+        for (let i = 0; i < n; i++)
+            this._actor(a, img, { x: x0 + i * m.w, y: y0, width: m.w, height: m.h });
+        if (vx) this._anims.push(t => { a.set_translation(-(((t * vx) % m.w + m.w) % m.w), 0, 0); });
         return a;
     }
 
@@ -182,19 +163,33 @@ export class Scene {
         if (!m?.base) return;
         const js = [m.base];
         for (let i = 1; m['j' + i]; i++) js.push(m['j' + i]);
-        const holder = new Clutter.Actor({x, y, scale_x: r() < 0.5 ? -k : k, scale_y: k});
-        parent.add_child(holder);
-        const ph = r() * TAU, sp = 0.35 + r() * 0.25, lean = (r() - 0.5) * 6;
-        let par = holder, prevTop = 0;
+        const mir = r() < 0.5 ? -k : k, ph = r() * TAU, sp = 0.35 + r() * 0.25, lean = (r() - 0.5) * 6;
+        const img = this._img(name);
+        if (!img) return;
+        // Segment = pivot actor + the whole image clipped to its band, the next segment hanging off the
+        // pivot (a clip cuts children too). The top segment has no children: one clipped image actor.
+        let par = parent, prevTop = 0;
         for (let i = 0; i < js.length; i++) {
             const top = Math.round(i + 1 < js.length ? js[i + 1][1] : 0), bot = Math.round(i ? js[i][1] + 3 : m.h);
-            const img = this._img(name, top, bot);
-            if (!img) return;
-            const a = this._actor(par, img, i ? {x: 0, y: top - prevTop, width: m.w, height: bot - top}
-                : {x: -m.base[0], y: top - m.base[1], width: m.w, height: bot - top});
-            a.set_pivot_point(js[i][0] / m.w, (js[i][1] - top) / (bot - top));
+            const x0 = i ? 0 : x - m.base[0], y0 = i ? top - prevTop : y - m.base[1] + top;
+            let a;
+            if (i + 1 === js.length) {
+                a = this._actor(par, img, { x: x0, y: y0 - top, width: m.w, height: m.h });
+                if (top || bot < m.h) a.set_clip(0, top, m.w, bot - top);
+                a.set_pivot_point(js[i][0] / m.w, js[i][1] / m.h);
+            } else {
+                a = new Clutter.Actor({ x: x0, y: y0, width: m.w, height: bot - top });
+                par.add_child(a);
+                this._actor(a, img, { y: -top, width: m.w, height: m.h }).set_clip(0, top, m.w, bot - top);
+                a.set_pivot_point(js[i][0] / m.w, (js[i][1] - top) / (bot - top));
+            }
+            if (!i) a.set_scale(mir, k);
             const ai = amp * (0.6 + 0.3 * i), base = i ? 0 : lean;
-            this._slow.push(t => { a.rotation_angle_z = base + ai * Math.sin(t * sp + ph - i * 0.6); });
+            let last = NaN;  // 0.1 degree steps, set only on change (the bulk of the slow sway calls)
+            this._slow.push(t => {
+                const r = Math.round((base + ai * Math.sin(t * sp + ph - i * 0.6)) * 10) / 10;
+                if (r !== last) a.set_rotation_angle(Clutter.RotateAxis.Z_AXIS, last = r);
+            });
             par = a;
             prevTop = top;
         }
@@ -205,8 +200,8 @@ export class Scene {
         if (!img) return;
         const layer = new Clutter.Actor();
         parent.add_child(layer);
-        for (let i = 0; i < 90; i++) {
-            const a = this._actor(layer, img, {width: bm.w, height: bm.h, visible: false});
+        for (let i = 0; i < 32; i++) {
+            const a = this._actor(layer, img, { width: bm.w, height: bm.h, visible: false });
             a.set_pivot_point(0.5, 0.5);
             this._pool.push({a, live: false, x: 0, y: 0, v: 0, vmax: 0, amp: 0, f: 0, ph: 0});
         }
@@ -226,8 +221,13 @@ export class Scene {
         }
         const diver = at.diver;
         let next = 0, burst = 0, dnext = 2, frame = 0;
+        const top = SAND - 50;  // a notification's bubble burst rises from here, top-centre
         this._anims.push((t, dt) => {
-            if (stone && (next -= dt) <= 0) {
+            const W = this._ctx.world;
+            if (W.notifications > this._notes)
+                for (let k = 0; k < 8; k++) this._emit(this._W / 2 + (k - 3.5) * 25, top + Math.random() * 40, 0.3 + Math.random() * 0.5);
+            this._notes = W.notifications;
+            if (stone && (next -= dt * (W.idle > 600 ? 0.5 : 1)) <= 0) {
                 this._emit(stone[0] + (Math.random() - 0.5) * 30, stone[1], 0.3 + Math.random() * (burst ? 0.4 : 0.7));
                 if (burst > 0) { burst--; next = 0.03 + Math.random() * 0.05; } else {
                     next = Math.random() < 0.12 ? 0.8 + Math.random() * 2 : 0.08 + Math.random() * 0.3;
@@ -238,7 +238,7 @@ export class Scene {
                 for (let k = 0; k < 4; k++) this._emit(valve[0] + k * 2, valve[1] - k * 14, 0.35 + Math.random() * 0.45);
                 dnext = 3 + Math.random() * 5;
             }
-            if (diver) diver.rotation_angle_z = 0.8 * Math.sin(t * 0.37);
+            if (diver) diver.set_rotation_angle(Clutter.RotateAxis.Z_AXIS, 0.8 * Math.sin(t * 0.37));
             if (lidA) {
                 const o = Math.max(0, Math.sin(t * 0.17)) ** 4, f = Math.round(o * 9);
                 if (f !== frame) lidA.content = lid[frame = f];
@@ -248,7 +248,7 @@ export class Scene {
                 if (!b.live) continue;
                 b.v = Math.min(b.vmax, b.v + 50 * dt);
                 b.y -= b.v * dt;
-                b.a.set_position(b.x + b.amp * Math.sin(t * b.f + b.ph), b.y);
+                b.a.set_translation(b.x + b.amp * Math.sin(t * b.f + b.ph), b.y, 0);
                 if (b.y < 40) { b.live = false; b.a.hide(); }
             }
         });
@@ -261,13 +261,13 @@ export class Scene {
         Object.assign(b, {live: true, x: x - m.w / 2, y: y - m.h / 2, v: 40 + 40 * size, vmax: 140 + 180 * size,
             amp: 4 + 10 * Math.random(), f: 2 + 3 * Math.random(), ph: Math.random() * TAU});
         b.a.set_scale(size, size);
-        b.a.set_position(b.x, b.y);
+        b.a.set_translation(b.x, b.y, 0);
         b.a.show();
     }
 
     // Snail creeping between x0 and x1: frames cycle, it only advances while stretching.
     _snail(parent, x0, x1, y) {
-        const frames = [...Array(8).keys()].map(i => this._m[`snail_${i}`] && this._img(`snail_${i}`));
+        const frames = [...Array(8).keys()].map(i => this._img(`snail_${i}`));
         const m = this._m.snail_0;
         if (!m?.base || !frames.every(Boolean)) return;
         const a = this._actor(parent, frames[0], {width: m.w, height: m.h, y: y - m.base[1]});
@@ -286,17 +286,31 @@ export class Scene {
     }
 
     tick(dt, t) {
-        if (!this._box) return;
         for (const f of this._anims) f(t, dt);
         for (let i = this._n++ % 3; i < this._slow.length; i += 3) this._slow[i](t);
+        if (this._n % 10 === 0) this._light(dt * 10);
     }
 
-    destroy() {
-        this._box?.destroy();
-        this._box = this._anims = this._slow = this._pool = this._pb = this.fishLayers = null;
-        if (this._live && --users === 0) cache.clear();
-        this._live = false;
+    // Light mood from hour, dark scheme and idle; eased so changes fade over a few seconds.
+    _light(dt) {
+        const { hour, dark, idle } = this._ctx.world, nt = night(hour);
+        const warm = !nt && (hour < 8 || hour >= 18);  // ponytail: fixed dawn/dusk bands
+        const dim = Math.min(0.8, (nt ? 0.4 : 0) + (dark ? 0.15 : 0) + (idle > 600 ? 0.2 : 0));
+        const k = Math.min(1, dt * 0.5);
+        this._rays += ((nt ? 0 : 1) - this._rays) * k;
+        fade(this._tint[0], dim, k);
+        fade(this._tint[1], warm ? 0.13 : 0, k);
     }
+
+    destroy() {  // actors go with ctx.root, which the host destroys
+        this._anims = this._slow = this._pool = [];
+    }
+}
+
+function fade(g, goal, k) {
+    g.v += (goal - g.v) * k;
+    const o = Math.round(g.v * 255);
+    if (o !== g.o) g.a.set_opacity(g.o = o);
 }
 
 // Seeded so the layout is identical on every rebuild.

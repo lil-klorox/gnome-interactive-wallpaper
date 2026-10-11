@@ -26,7 +26,7 @@ def flat(name, w, h, build, samples=32):
     m.node_tree.links.new(em.outputs[0], mix.inputs[2])
     N(m, 'OutputMaterial', Surface=mix)
     p.data.materials.append(m)
-    return render(f'scene/{name}.png')
+    return render(f'{name}.png')
 
 
 def torus(m, uv, R, both=True, vscale=1.0):

@@ -12,7 +12,10 @@
 //         chomp       mouth busy (nibbling)
 //         alarm       startled (puffer puffs)
 // c (context): { f: motion state from steer.js, p: pointer {x,y,speed}|null, b: swim bounds,
-//                mates: [{f, b}] fish sharing the layer (motion + brain, includes this one), dt, rand }
+//                mates: [{f, b}] fish sharing the layer (motion + brain, includes this one), dt, rand,
+//                threats: [{x,y,w,h}] rects to flee, food: [{x,y,live}] flakes, attn: {x,y}|null
+//                notification spot (attnNew on its first tick), wake: user just came back,
+//                drowsy: rest weight multiplier (night/idle), lazy: speed multiplier }
 
 export const FAST = 1400;  // px/s cursor speed that startles a fish with nerve 1
 export const SEE = 260;    // px a fish notices the cursor from
@@ -33,12 +36,40 @@ export const PERSONALITY = {
     betta: { curious: 0.75, nerve: 1.2, attention: 2, dash: 2.5, band: [0.1, 0.45], social: 0, nibble: 0.2, rest: 0.8 },
 };
 
-const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const dist = (a, b) => { const x = a.x - b.x, y = a.y - b.y; return Math.sqrt(x * x + y * y); };
 const near = c => c.p && dist(c.f, c.p) < SEE * 1.2 ? c.p : null;
 const sandY = c => c.b.y + c.b.h - c.f.pad;
-const mateIn = (c, state, r, same) =>
-    c.mates.find(m => m.b.state === state && m.f !== c.f && (!same || m.b.pers === same) && dist(m.f, c.f) < r);
-const calm = (b, c, it) => notice(b, c) ?? { shoal: b.pers.social, look: near(c), ...it };
+function mateIn(c, state, r, same) {
+    for (const m of c.mates)
+        if (m.b.state === state && m.f !== c.f && (!same || m.b.pers === same) && dist(m.f, c.f) < r) return m;
+    return null;
+}
+// Nearest point of any threat rect within SEE, as its centre; null when none.
+function threat(c) {
+    if (c.threats) for (const r of c.threats) {
+        const dx = Math.max(r.x - c.f.x, 0, c.f.x - r.x - r.w), dy = Math.max(r.y - c.f.y, 0, c.f.y - r.y - r.h);
+        if (dx * dx + dy * dy < SEE * SEE) return r;
+    }
+    return null;
+}
+function flake(c) {
+    let best = null, bd = SEE;
+    if (c.food) for (const k of c.food) if (k.live) { const d = dist(c.f, k); if (d < bd) { bd = d; best = k; } }
+    return best;
+}
+const tame = b => Math.min(2, 1 + b.fed / 50);
+// Night (21-6, ponytail: fixed bands, sunrise math when location is wired) and a long-idle desk both
+// make fish rest more and swim slower.
+export const night = hour => hour >= 21 || hour < 6;
+export const drowsy = (hour, idle) => (night(hour) ? 3 : 1) * (idle > 600 ? 3 : 1);
+export const lazy = (hour, idle) => (night(hour) ? 0.7 : 1) * (idle > 600 ? 0.5 : 1);
+function calm(b, c, it) {  // fills defaults into the state's own intent object
+    const n = notice(b, c);
+    if (n) return n;
+    it.shoal ??= b.pers.social;
+    if (it.look === undefined) it.look = near(c);
+    return it;
+}
 
 // Calm states call this: a slow cursor close by (or a curious neighbour near it) gets a roll
 // of the dice, curious or flee. A cursor parked for a while is ignored (habituation).
@@ -47,13 +78,15 @@ function notice(b, c) {
     const d = dist(c.f, c.p);
     if (d > SEE && !(d < SEE * 2 && mateIn(c, 'curious', 200))) return null;
     b.cool = 4;
-    return c.rand() < b.pers.curious ? 'curious' : 'flee';
+    if (c.rand() < 1 - (1 - b.pers.curious) / tame(b)) return 'curious';  // fed fish are tamer
+    b.fx = c.p.x; b.fy = c.p.y;
+    return 'flee';
 }
 
 // Idle gets restless after a while and picks the next thing to do, weighted by personality.
 function restless(b, c) {
     const P = b.pers, alone = c.mates.length < 2;
-    const w = [['nibble', P.nibble], ['rest', P.rest], ['follow', alone ? 0 : P.follow], ['gulp', P.gulp], ['idle', 1]];
+    const w = [['nibble', P.nibble], ['rest', (P.rest ?? 0) * (c.drowsy ?? 1)], ['follow', alone ? 0 : P.follow], ['gulp', P.gulp], ['idle', 1]];
     let r = c.rand() * w.reduce((s, [, x]) => s + (x ?? 0), 0);
     for (const [name, x] of w) if ((r -= x ?? 0) <= 0) return name;
     return 'idle';
@@ -65,7 +98,7 @@ export const STATES = {
         update: (b, c) => {
             // air gulps are catching: a nearby gulper of the same kind sets this one off now and then
             if (b.pers.gulp && mateIn(c, 'gulp', 250, b.pers) && c.rand() < c.dt) return 'gulp';
-            return b.timer <= 0 ? notice(b, c) ?? restless(b, c) : calm(b, c, { speed: 0.6, band: b.pers.band });
+            return b.timer <= 0 ? notice(b, c) ?? restless(b, c) : calm(b, c, { speed: 0.6, band: b.pers.band, look: c.attn ?? undefined });
         },
     },
     curious: {
@@ -79,10 +112,11 @@ export const STATES = {
             };
         },
     },
-    flee: {
-        enter: (b, c) => { b.panic = 1; b.fx = c.p?.x ?? b.fx; b.fy = c.p?.y ?? b.fy; },
+    flee: {  // whoever sends a fish here sets b.fx/fy, the point to flee from
+        enter: b => { b.panic = 1; },
         update: (b, c) => {
-            if (c.p && dist(c.f, c.p) < SEE * 1.5) { b.fx = c.p.x; b.fy = c.p.y; }
+            const r = threat(c);
+            if (r) { b.fx = r.x + r.w / 2; b.fy = r.y + r.h / 2; } else if (c.p && dist(c.f, c.p) < SEE * 1.5) { b.fx = c.p.x; b.fy = c.p.y; }
             b.panic -= c.dt * 0.4;
             if (b.panic < 0.1) return 'bored';
             return { ax: b.fx, ay: b.fy, speed: 1 + b.pers.dash * b.panic, look: null, alarm: true, shoal: 1 };
@@ -120,6 +154,15 @@ export const STATES = {
             return calm(b, c, { tx: m.x - Math.cos(m.dir) * behind, ty: m.y - Math.sin(m.dir) * behind, speed: 1.3, look: m });
         },
     },
+    feed: {  // swim to the flake, chomp it; it vanishes for everyone
+        enter: (b, c) => { b.food = flake(c); b.timer = 15; },
+        update: (b, c) => {
+            const k = b.food;
+            if (!k?.live || b.timer <= 0) return 'idle';
+            if (dist(c.f, k) < 14 + c.f.pad * 0.3) { k.live = false; b.fed++; b.food = null; return 'idle'; }
+            return { tx: k.x, ty: k.y, speed: 1.6, look: k, chomp: dist(c.f, k) < 40, shoal: 0 };
+        },
+    },
     gulp: {  // corydoras dart up for a gulp of air, then sink back home
         enter: (b, c) => { b.tx = c.f.x + (c.rand() - 0.5) * 120; b.ty = c.b.y + c.f.pad; b.timer = 6; },
         update: (b, c) => b.timer <= 0 || c.f.y < b.ty + 12 ? 'idle' : { tx: b.tx, ty: b.ty, speed: 2.5, look: null },
@@ -127,7 +170,7 @@ export const STATES = {
 };
 
 export function makeBrain(pers, rand = Math.random) {
-    return { pers, state: 'idle', timer: 4 + rand() * 6, cool: 0, still: 0, panic: 0, fx: 0, fy: 0 };
+    return { pers, state: 'idle', timer: 4 + rand() * 6, cool: 0, still: 0, panic: 0, fx: 0, fy: 0, fed: 0, dart: 0, food: null };
 }
 
 function enter(b, name, c) {
@@ -139,15 +182,28 @@ function enter(b, name, c) {
 export function think(b, c) {
     b.timer -= c.dt;
     b.cool -= c.dt;
+    b.dart -= c.dt;
     b.still = c.p && c.p.speed < 30 ? b.still + c.dt : 0;
-    // a fast cursor nearby startles every fish whatever it was doing; panic spreads to calm neighbours
-    const p = c.p, scare = p && b.state !== 'flee' && p.speed > FAST * b.pers.nerve && dist(c.f, p) < SEE * 1.5;
-    const spooked = !scare && b.state !== 'flee' && b.cool <= 0 && mateIn(c, 'flee', 220);
-    if (spooked) { b.fx = spooked.b.fx; b.fy = spooked.b.fy; }
-    let r = scare || spooked ? 'flee' : STATES[b.state].update(b, c);
+    // a fast cursor or a moving window nearby startles every fish whatever it was doing; panic
+    // spreads to calm neighbours
+    const p = c.p, calmNow = b.state !== 'flee';
+    const scare = calmNow && p && p.speed > FAST * b.pers.nerve * tame(b) && dist(c.f, p) < SEE * 1.5;
+    const th = calmNow && !scare && threat(c);
+    const spooked = calmNow && !scare && !th && b.cool <= 0 && mateIn(c, 'flee', 220);
+    let r = null;
+    if (scare) { b.fx = p.x; b.fy = p.y; r = 'flee'; }
+    else if (th) { b.fx = th.x + th.w / 2; b.fy = th.y + th.h / 2; r = 'flee'; }
+    else if (spooked) { b.fx = spooked.b.fx; b.fy = spooked.b.fy; r = 'flee'; }
+    else if (calmNow && b.state !== 'feed' && flake(c)) r = 'feed';
+    else if (c.wake && p && calmNow && dist(c.f, p) < SEE * 3) r = 'curious';
+    if (c.attnNew && c.f.y < c.b.y + c.b.h * 0.35) b.dart = 0.5;  // surface fish dart at a notification
+    r ??= STATES[b.state].update(b, c);
     for (let i = 0; typeof r === 'string' && i < 4; i++) {
         enter(b, r, c);
         r = STATES[r].update(b, c);
     }
-    return typeof r === 'string' ? { speed: 0.6, look: null } : r;
+    if (typeof r === 'string') r = { speed: 0.6, look: null };
+    if (b.dart > 0) r.speed *= 2.5;
+    else if (b.state !== 'flee') r.speed *= c.lazy ?? 1;
+    return r;
 }

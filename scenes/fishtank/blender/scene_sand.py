@@ -204,7 +204,7 @@ def build():
     v1 = BACK * math.sin(T) + 0.15
     hpx = round((v1 - v0) * PPU)
     camera(P, round(P * PPU), hpx, tilt=TILT, z=(v1 + v0) / 2 / math.cos(T))
-    render('scene/sand.png')
+    render('sand.png')
     manifest('sand', {'w': round(P * PPU), 'h': hpx})
 
 

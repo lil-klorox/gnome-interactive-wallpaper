@@ -1,0 +1,20 @@
+name: ci
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    steps:
+      - uses: actions/checkout@v4
+      - run: apt-get update && apt-get install -y --no-install-recommends gjs gnome-shell make zip
+      - run: make pack
+      - if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: '*.shell-extension.zip'

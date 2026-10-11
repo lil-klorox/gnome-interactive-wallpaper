@@ -174,7 +174,7 @@ def plate(name, L, haze, far, yb, build, sd, res):
     top += 0.1
     hpx = round((top - v0) * PPU)
     camera(L, round(L * PPU * res), round(hpx * res), tilt=TILT, z=(top + v0) / 2 / math.cos(T))  # hazy: low res, scaled up
-    render(f'scene/{name}.png')
+    render(f'{name}.png')
     manifest(name, {'w': round(L * PPU), 'h': hpx, 'yb': yb})
 
 

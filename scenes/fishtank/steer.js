@@ -22,11 +22,11 @@ export function step(f, dt, it, b, all, rand = Math.random) {
     let ax = 0, ay = 0;  // wanted change in velocity, summed from each behaviour
 
     if (flee) {  // full speed directly away
-        const dx = f.x - it.ax, dy = f.y - it.ay, d = Math.hypot(dx, dy) || 1;
+        const dx = f.x - it.ax, dy = f.y - it.ay, d = Math.sqrt(dx * dx + dy * dy) || 1;
         ax += (dx / d * top - vx) * 2;
         ay += (dy / d * top - vy) * 2;
     } else if (!wander) {  // seek, slowing to a hover on arrival
-        const dx = it.tx - f.x, dy = it.ty - f.y, d = Math.hypot(dx, dy) || 1, s = Math.min(top, d * 1.5) / d;
+        const dx = it.tx - f.x, dy = it.ty - f.y, d = Math.sqrt(dx * dx + dy * dy) || 1, s = Math.min(top, d * 1.5) / d;
         ax += (dx * s - vx) * 2;
         ay += (dy * s - vy) * 2;
     } else {  // smooth noisy heading, mostly horizontal; a short tail-beat burst, then a long coast
@@ -49,24 +49,30 @@ export function step(f, dt, it, b, all, rand = Math.random) {
     // separation from layer-mates; tight cohesion + alignment with own school, and loose wide
     // shoaling with any species nearby, weighted by intent.shoal. Mates in the blind spot behind
     // don't pull, so leaders emerge.
-    const sh = it.shoal ?? 0, school = { n: 0, x: 0, y: 0, vx: 0, vy: 0 }, shoal = { ...school };
+    const sh = it.shoal ?? 0, cd = Math.cos(f.dir), sd = Math.sin(f.dir);
+    let sn = 0, sx = 0, sy = 0, svx = 0, svy = 0, hn = 0, hx = 0, hy = 0, hvx = 0, hvy = 0;  // school, shoal sums
     for (const o of all) {
         if (o === f) continue;
-        const dx = f.x - o.x, dy = f.y - o.y, d = Math.hypot(dx, dy) || 1, r = f.pad + o.pad + 12;
+        const dx = f.x - o.x, dy = f.y - o.y, d2 = dx * dx + dy * dy;
+        if (d2 > 102400) continue;  // 320 px: past every radius below
+        const d = Math.sqrt(d2) || 1, r = f.pad + o.pad + 12;
         if (d < r) { ax += dx / d * (1 - d / r) * f.cruise * 3; ay += dy / d * (1 - d / r) * f.cruise * 3; }
-        if ((-dx * Math.cos(f.dir) - dy * Math.sin(f.dir)) / d < -0.7) continue;
-        const g = f.school && o.school === f.school && d < 250 ? school : sh && d < 320 ? shoal : null;
-        if (!g) continue;
-        g.n++; g.x += o.x; g.y += o.y; g.vx += Math.cos(o.dir) * o.speed; g.vy += Math.sin(o.dir) * o.speed;
+        if ((-dx * cd - dy * sd) / d < -0.7) continue;
+        const ovx = Math.cos(o.dir) * o.speed, ovy = Math.sin(o.dir) * o.speed;
+        if (f.school && o.school === f.school && d < 250) { sn++; sx += o.x; sy += o.y; svx += ovx; svy += ovy; }
+        else if (sh) { hn++; hx += o.x; hy += o.y; hvx += ovx; hvy += ovy; }
     }
-    for (const [g, c, a] of [[school, 0.5, 0.8], [shoal, 0.06 * sh, 0.25 * sh]]) {
-        if (!g.n) continue;
-        ax += (g.x / g.n - f.x) * c + (g.vx / g.n - vx) * a;
-        ay += (g.y / g.n - f.y) * c + (g.vy / g.n - vy) * a;
+    if (sn) {
+        ax += (sx / sn - f.x) * 0.5 + (svx / sn - vx) * 0.8;
+        ay += (sy / sn - f.y) * 0.5 + (svy / sn - vy) * 0.8;
+    }
+    if (hn) {
+        ax += (hx / hn - f.x) * 0.06 * sh + (hvx / hn - vx) * 0.25 * sh;
+        ay += (hy / hn - f.y) * 0.06 * sh + (hvy / hn - vy) * 0.25 * sh;
     }
 
     // integrate with a max turn rate (quicker when dashing)
-    const nvx = vx + ax * dt * 2, nvy = vy + ay * dt * 2, sp = Math.hypot(nvx, nvy);
+    const nvx = vx + ax * dt * 2, nvy = vy + ay * dt * 2, sp = Math.sqrt(nvx * nvx + nvy * nvy);
     if (sp > 1) {  // hovering in place keeps its heading instead of jittering
         let diff = Math.atan2(nvy, nvx) - f.dir;
         diff = Math.atan2(Math.sin(diff), Math.cos(diff));
