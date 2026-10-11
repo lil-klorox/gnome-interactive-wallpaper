@@ -1,5 +1,5 @@
 # Shared render setup so scenery and fish share one camera, light rig and look.
-# Run scripts as: ~/opt/blender/blender -b --factory-startup -P blender/<script>.py
+# Run scripts as: blender -b --factory-startup -P blender/<script>.py
 import fcntl
 import json
 import math

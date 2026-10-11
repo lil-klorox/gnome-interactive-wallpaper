@@ -2,7 +2,7 @@
 # with real rays, eyes, lips, barbels, spikes) with numpy-painted textures, swum with a sine
 # body wave, and rendered with Cycles as swim-cycle frames x yaw angles (profile -> front; the
 # runtime mirrors the other half). Writes assets/<name>.png + its manifest entry (+ puffer -puff).
-# Run: ~/opt/blender/blender -b --factory-startup -P blender/fish.py -- [species ...] [--preview DIR]
+# Run: blender -b --factory-startup -P blender/fish.py -- [species ...] [--preview DIR]
 import math
 import os
 import sys

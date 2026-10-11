@@ -148,7 +148,7 @@ fish `feed`. Store `{fish: {id: {born, fed}}}`: fish grow over 30 days, fed fish
 ## Art pipeline (Blender, offline)
 
 Headless bpy scripts in `scenes/fishtank/blender/` are the source of truth; runtime never needs
-Blender. `~/opt/blender/blender -b --factory-startup -P scenes/fishtank/blender/<script>.py`.
+Blender. `blender -b --factory-startup -P scenes/fishtank/blender/<script>.py`.
 - `common.py`: Cycles, ortho camera, shared underwater light rig and PBR helpers, `sprite()` (render
   + crop + points), `manifest()` (flock'd write of one entry, adds `px`).
 - `scene_*.py`: one prop each. `fish.py [species ...]`: swim frames × yaws (profile → front; the

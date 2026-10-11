@@ -82,7 +82,7 @@ You can paint art by hand and write the entry yourself, or render it with Blende
 does. Its helpers in `scenes/fishtank/blender/common.py` set up the camera and lights;
 `sprite(name, points)` renders, crops and writes the manifest entry (including `px`) for you:
 
-    ~/opt/blender/blender -b --factory-startup -P scenes/fishtank/blender/scene_castle.py
+    blender -b --factory-startup -P scenes/fishtank/blender/scene_castle.py
 
 ## Test it
 
