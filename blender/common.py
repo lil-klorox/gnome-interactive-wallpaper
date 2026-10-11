@@ -71,6 +71,12 @@ def fit(objs, margin=0.15, tilt=TILT, ppu=PPU):
     cam.data.ortho_scale = max(x1 - x0, y1 - y0)
     s = bpy.context.scene
     s.render.resolution_x, s.render.resolution_y = round((x1 - x0) * ppu), round((y1 - y0) * ppu)
+    for o in s.objects:  # shrink shadow-catcher fades to stay inside the frame
+        fade = o.is_shadow_catcher and o.active_material and o.active_material.node_tree.nodes.get('fade')
+        if fade:
+            rx = 0.95 * min(-x0, x1) if x0 < 0 < x1 else 1
+            ry = 0.95 * -y0 / math.sin(math.radians(tilt)) if y0 < 0 and tilt else 1
+            fade.inputs['Scale'].default_value = (1 / max(rx, 0.3), 1 / max(ry, 0.3), 1)
     return cam
 
 
@@ -107,6 +113,10 @@ def scenery(samples=256):
     top.data.energy, top.data.size, top.data.color = 60, 5, (0.85, 0.95, 1.0)
     top.location = (0, 0, 6)
     s.collection.objects.link(top)
+    warm = bpy.data.objects.new('sandbounce', bpy.data.lights.new('sandbounce', 'AREA'))  # sunlit sand bouncing up warm
+    warm.data.energy, warm.data.size, warm.data.color = 160, 5, (1.0, 0.72, 0.45)
+    warm.location, warm.rotation_euler = (0, -5, 0.2), (math.radians(95), 0, 0)
+    s.collection.objects.link(warm)
     s.view_settings.exposure = -0.6
     s.world.node_tree.nodes['Background'].inputs['Strength'].default_value = 1.6  # water scatters light all round
     return s
@@ -303,6 +313,16 @@ def ground(size=8.0, z=0.0, soft=3.0, power=3000):
     bpy.ops.mesh.primitive_plane_add(size=size, location=(0, 0, z))
     p = bpy.context.object
     p.is_shadow_catcher = True
+    # the caught shadow fades out on an ellipse (fit() sizes it to the frame) so it has no hard edge
+    m = new_mat('catcher')
+    d = N(m, 'VectorMath', _operation='LENGTH', Vector=N(m, 'Mapping', Vector=(N(m, 'TexCoord'), 'Object')))
+    d.inputs[0].links[0].from_node.name = 'fade'
+    f = N(m, 'MapRange', Value=(d, 'Value'), **{'From Min': 0.5, 'To Min': 1.0, 'To Max': 0.0}, _interpolation_type='SMOOTHSTEP')
+    mx = N(m, 'MixShader', Fac=(f, 'Result'))
+    m.node_tree.links.new(N(m, 'BsdfTransparent').outputs[0], mx.inputs[1])
+    m.node_tree.links.new(N(m, 'BsdfDiffuse').outputs[0], mx.inputs[2])
+    N(m, 'OutputMaterial', Surface=mx)
+    p.data.materials.append(m)
     p.visible_diffuse = p.visible_glossy = p.visible_transmission = False  # its light must not bounce onto the prop
     rc = bpy.data.collections.new('floor_only')
     rc.objects.link(p)
@@ -398,3 +418,24 @@ def rock(size, sink=0.3, sd=1, facets=0.015, loc=(0, 0, 0)):
 
 def stone(name, moss=0.4, c1=(0.07, 0.065, 0.06), c2=(0.2, 0.17, 0.13), scale=1.6):
     return pbr(name, c1, c2, rough=0.85, scale=scale, bump=0.5, vor=0.2, moss=moss, grime=0.7, cracks=0.4, strata=0.3)
+
+
+def sand_mat(wrap=0.0):
+    """Wet aquarium sand with coloured grains; the sand bed and the berms props sink into share it."""
+    m = pbr('sand', (0.36, 0.29, 0.19), (0.55, 0.46, 0.32), rough=0.75, scale=0.6, bump=0.25, grime=0.5, wrap=wrap)
+    nt = m.node_tree
+    bs = principled(m)
+    # coloured grains: tiny voronoi cells, a few tinted dark / rust / white
+    cx = next((n for n in nt.nodes if n.type == 'COMBXYZ'), None)
+    co = cx.outputs[0] if cx else next(n for n in nt.nodes if n.type == 'TEX_COORD').outputs['Object']
+    vo = N(m, 'TexVoronoi', Scale=95.0, Randomness=1.0)
+    nt.links.new(co, vo.inputs['Vector'])
+    pick = ramp(m, (vo, 'Color'), [(0.0, (0.05, 0.04, 0.035)), (0.08, (0.05, 0.04, 0.035)), (0.09, (1, 1, 1)),
+                                   (0.9, (1, 1, 1)), (0.91, (0.45, 0.18, 0.08)), (0.95, (1.0, 1.0, 1.0))])
+    pick.color_ramp.interpolation = 'CONSTANT'
+    base = bs.inputs['Base Color'].links[0].from_socket
+    mix = N(m, 'Mix', _data_type='RGBA', _blend_type='MULTIPLY', Factor=0.8, B=(pick, 'Color'))
+    nt.links.new(base, sock(mix.inputs, 'A'))
+    nt.links.new(sock(mix.outputs, 'Result'), bs.inputs['Base Color'])
+    bs.inputs['Specular IOR Level'].default_value = 0.6  # wet glints
+    return m

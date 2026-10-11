@@ -7,7 +7,7 @@ import GLib from 'gi://GLib';
 import St from 'gi://St';
 import System from 'system';
 
-const DIR = GLib.filename_from_uri(new URL('assets/scene/', import.meta.url).href)[0];
+const DIR = GLib.filename_from_uri(GLib.uri_resolve_relative(import.meta.url, 'assets/scene/', GLib.UriFlags.NONE))[0];
 const TAU = Math.PI * 2;
 const REF = 1440;        // art is rendered for a 1440 px tall screen; everything below is in those pixels
 const SAND = 1150;       // ref row of the sand's back edge
@@ -21,7 +21,7 @@ const PROPS = [
     ['rock_a', 0.53, 1262, 0.9], ['chest', 0.6, 1290, 1], ['bubbler', 0.71, 1268, 1], ['diver', 0.86, 1255, 1],
     ['rock_d', 0.94, 1300, 1], ['rock_a', 0.03, 1335, 0.7],
 ];
-const SPECIES = ['vallisneria', 'sword', 'fern', 'cabomba', 'ludwigia', 'anubias'];
+const SPECIES = ['valli', 'sword', 'jfern', 'cabomba', 'ludwigia', 'anubias'];
 
 function upload(pb) {
     const img = St.ImageContent.new_with_preferred_size(pb.width, pb.height);
@@ -63,7 +63,7 @@ export class Scene {
         };
         const sky = layer(0);
         this._add(sky, 'backdrop', 0, 0, {width: W, height: REF});
-        this._tile(sky, 'surface', 0, -6, W, 8, 0);
+        this._tile(sky, 'surface', 0, -6, W, 8);
         for (let i = 0; i < 7; i++) {
             const a = this._add(sky, 'ray', (0.04 + i * 0.15 + 0.06 * Math.sin(i * 7.3)) * W, -60, {height: 1150 + 200 * Math.sin(i * 3.1)});
             if (!a) break;
@@ -73,14 +73,14 @@ export class Scene {
         }
         for (const [n, k] of [['far0', 0.2], ['far1', 0.35], ['far2', 0.5]]) {
             const m = this._m[n];
-            if (m) this._tile(layer(k), n, -DRIFT, m.yb - m.h, W + 2 * DRIFT, 0, 0);
+            if (m) this._tile(layer(k), n, -DRIFT, m.yb - m.h, W + 2 * DRIFT, 0);
         }
         const floor = layer(0.75);
         const sand = this._m.sand;
         if (sand) {
-            this._tile(floor, 'sand', -DRIFT, REF - sand.h, W + 2 * DRIFT, 0, 0);
+            this._tile(floor, 'sand', -DRIFT, REF - sand.h, W + 2 * DRIFT, 0);
             for (const [v, op] of [[7, 150], [-11, 110]]) {
-                const c = this._tile(floor, 'caustics', -DRIFT, REF - this._m.caustics?.h, W + 2 * DRIFT, v, 0);
+                const c = this._tile(floor, 'caustics', -DRIFT, REF - this._m.caustics?.h, W + 2 * DRIFT, v);
                 if (c) c.opacity = op;
             }
         }
@@ -107,7 +107,7 @@ export class Scene {
         for (const fx of [0.0, 0.025, 0.05, 0.95, 0.975, 1.0])
             this._plant(front, fx * W + (r() - 0.5) * 40, REF + 30, 1.0 + r() * 0.4, 2.6);
         for (let i = 0; i < 12; i++)
-            this._plant(front, r() * W, REF + 10, 0.8 + r() * 0.5, 3, 'hairgrass');
+            this._plant(front, r() * W, REF + 10, 0.8 + r() * 0.5, 3, 'hair');
         System.gc();  // the decoded PNGs are only referenced from JS now; free them
     }
 
@@ -152,15 +152,16 @@ export class Scene {
         return a;
     }
 
-    // Horizontally repeating strip; vx = drift speed (ref px/s), wob = sideways sway amplitude.
-    _tile(parent, name, x, y, width, vx, wob) {
+    // Horizontally repeating strip (side-by-side copies sharing one texture; St.ImageContent can't
+    // repeat); vx = drift speed in ref px/s.
+    _tile(parent, name, x, y, width, vx) {
         const m = this._m[name], img = m && this._img(name);
         if (!img) return null;
-        const a = this._actor(parent, img, {x, y, width: width + m.w, height: m.h});
-        a.set_content_gravity(Clutter.ContentGravity.TOP_LEFT);
-        a.set_content_repeat(Clutter.ContentRepeat.X_AXIS);
-        if (vx || wob)
-            this._anims.push(t => { a.translation_x = -(((t * vx) % m.w + m.w) % m.w) + wob * Math.sin(t * 0.21); });
+        const a = new Clutter.Actor({x, y});
+        parent.add_child(a);
+        for (let i = 0; i * m.w < width + (vx ? m.w : 0); i++)
+            this._actor(a, img, {x: i * m.w, width: m.w, height: m.h});
+        if (vx) this._anims.push(t => { a.translation_x = -(((t * vx) % m.w + m.w) % m.w); });
         return a;
     }
 
