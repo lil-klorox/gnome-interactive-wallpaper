@@ -40,4 +40,9 @@ export function bytesOf(images, k) {
 // bytes = bytesOf(images, 1). floor() in sizeAt keeps bytesOf(images, k) <= budget.
 export const scaleFor = (h, ref, bytes, budget = BUDGET) => Math.min(1, h / ref, Math.sqrt(budget / bytes));
 
-export const frameOffset = (e, i) => [(i % e.cols) * e.w, Math.floor(i / e.cols) * e.h];
+// out: pass a reused pair to keep per-frame calls allocation-free.
+export const frameOffset = (e, i, out = [0, 0]) => {
+    out[0] = (i % e.cols) * e.w;
+    out[1] = Math.floor(i / e.cols) * e.h;
+    return out;
+};

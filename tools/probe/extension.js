@@ -4,6 +4,7 @@ import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Shell from 'gi://Shell';
+import System from 'system';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 const env = GLib.getenv;
@@ -16,7 +17,7 @@ export default class Probe {
         if (this._started)
             return;
         this._started = true;
-        const out = env('OUT'), uuid = env('TARGET_UUID'), secs = Number(env('SECS') || 40);
+        const soak = Number(env('SOAK') || 0), out = env('OUT'), uuid = env('TARGET_UUID'), secs = Number(env('SECS') || 40);
         const lines = [], em = Main.extensionManager, start = GLib.get_monotonic_time() / 1e6;
         const rss = () => Number(/VmRSS:\s+(\d+)/.exec(new TextDecoder().decode(GLib.file_get_contents('/proc/self/status')[1]))[1]) / 1024;
         const stats = () => em.lookup(uuid)?.stateObj?.stats;
@@ -57,6 +58,12 @@ export default class Probe {
             if (i === 34) { snap('re-enabled'); em.disableExtension(uuid); }
             if (i === 36) em.enableExtension(uuid);
             if (i === 42) snap('re-enabled-2');
+            const k = i - 44;  // SOAK=n: n more off/on cycles, 3 s each, RSS after a GC
+            if (k >= 0 && k < soak * 6) {
+                if (k % 6 === 0) em.disableExtension(uuid);
+                if (k % 6 === 1) em.enableExtension(uuid);
+                if (k % 6 === 5) { System.gc(); snap(`soak-${k / 6 + 1 | 0}`); }
+            }
             if (secs >= 80 && i === 2 * (secs - 14)) idle = rate();
             if (secs >= 80 && i === 2 * (secs - 4)) rate('idle', idle);
             return i < 2 * secs;

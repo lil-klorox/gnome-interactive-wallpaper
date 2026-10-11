@@ -127,6 +127,22 @@ const restTime = hour => {
 const day = restTime(12), nightRest = restTime(23);
 ok(nightRest > day * 1.5, `rests more at night (${day} -> ${nightRest})`);
 
+// night huddle: a tetra school wanders lower and packs tighter than by day
+const school = night => {
+    const ts = [];
+    for (let i = 0; i < 7; i++) ts.push({ f: makeFish({ x: 700 + i * 30, y: 300, cruise: 60, school: 't' }, rand), b: makeBrain(PERSONALITY.tetra, rand) });
+    let y = 0, spread = 0, n = 0;
+    for (let i = 0; i < 30 * 120; i++) {
+        for (const q of ts) run(q, null, ts, { night });
+        if (i < 30 * 30) continue;
+        const my = ts.reduce((s, q) => s + q.f.y, 0) / 7, mx = ts.reduce((s, q) => s + q.f.x, 0) / 7;
+        y += my; spread += ts.reduce((s, q) => s + Math.hypot(q.f.x - mx, q.f.y - my), 0) / 7; n++;
+    }
+    return [y / n, spread / n];
+};
+const [dayY, daySpread] = school(false), [nightY, nightSpread] = school(true);
+ok(nightY > dayY + 100 && nightSpread < daySpread, `tetras huddle low and tight at night (y ${dayY | 0} -> ${nightY | 0}, spread ${daySpread | 0} -> ${nightSpread | 0})`);
+
 // sprite frame i = yaw row * cols + phase col, row-major in the sheet, as fish.js indexes it
 ok(String(frameOffset({ w: 116, h: 165, cols: 12 }, 3 * 12 + 5)) === String([5 * 116, 3 * 165]), 'frame index is row-major');
 console.log('brain + steer ok');

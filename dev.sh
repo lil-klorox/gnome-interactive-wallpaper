@@ -2,7 +2,7 @@
 # Run the extension in a throwaway gnome-shell; your real session's extensions and settings are
 # never touched. `./dev.sh` = nested window; `./dev.sh --headless [secs]` = virtual monitor, the
 # tools/probe extension drives a cursor + notification, writes s*.png and stats.txt to $OUT.
-# Env: SCENE=<id> picks a scene, SIZE=WxH the monitor.
+# Env: SCENE=<id> picks a scene, SIZE=WxH the monitor, SOAK=n adds n off/on cycles (needs secs >= 22 + 3n).
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 uuid=interactive-wallpaper@lil-klorox

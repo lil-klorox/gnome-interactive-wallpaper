@@ -108,7 +108,7 @@ export function makeCtx(sc, cache, cancel, root, w, h, world) {
     };
     const sheet = name => {
         const e = image(name);
-        const rows = Math.ceil(e.n / e.cols);
+        const rows = Math.ceil(e.n / e.cols), xy = [0, 0];
         return {
             ...e,
             // e.w × e.h clip box; the child is the whole sheet, a frame change is one translation.
@@ -117,14 +117,15 @@ export function makeCtx(sc, cache, cancel, root, w, h, world) {
                 const c = new Clutter.Actor({content: e.content, width: e.w * e.cols, height: e.h * rows});
                 c.set_content_scaling_filters(Clutter.ScalingFilter.LINEAR, Clutter.ScalingFilter.LINEAR);
                 a.add_child(c);
+                a._c = c;  // cached: show() runs per frame
                 return a;
             },
             show(a, i) {
                 if (a._f === i)
                     return;
                 a._f = i;
-                const [x, y] = frameOffset(e, i);
-                a.first_child.set_translation(-x, -y, 0);
+                frameOffset(e, i, xy);
+                a._c.set_translation(-xy[0], -xy[1], 0);
             },
         };
     };

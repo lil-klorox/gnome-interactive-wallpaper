@@ -5,7 +5,7 @@
 import Clutter from 'gi://Clutter';
 import St from 'gi://St';
 import Cairo from 'cairo';
-import { makeBrain, think, PERSONALITY, drowsy, lazy } from './brain.js';
+import { makeBrain, think, PERSONALITY, drowsy, lazy, night } from './brain.js';
 import { makeFish, step } from './steer.js';
 
 // n: how many; cruise px/s at full size; burst/coast: wander gait seconds; turn rad/s
@@ -108,7 +108,7 @@ export class School {
         }
         this._threats = [];
         this._pulses = [0, 1, 2, 3].map(() => ({ x: 0, y: 0, w: 0, h: 0, t: 0 }));
-        this._seen = null;
+        this._maxId = -1;  // newest window id seen; -1 = none yet (first look pulses nothing)
         const W = ctx.world;
         this._notes = W.notifications;
         this._idle = W.idle;
@@ -120,7 +120,7 @@ export class School {
         this._fedSum = -1;  // -1: save once soon, so first-seen fish keep their birthday
         this._saved = 0;
         this._c = { f: null, p: null, b, mates: null, dt: 0, rand: Math.random, threats: this._threats,
-            food: this._flakes, attn: null, attnNew: false, wake: false, drowsy: 1, lazy: 1 };
+            food: this._flakes, attn: null, attnNew: false, wake: false, drowsy: 1, lazy: 1, night: false };
     }
 
     // Sheets (main + puffer's puff) and the largest eye radius, so one eye texture fits every frame.
@@ -153,7 +153,7 @@ export class School {
             return { a, on: false, x: NaN, y: NaN, z: NaN, q: NaN };
         });
         parent.add_child(box);
-        return { sh, box, child, eyes, half: D / 2, i: -1 };
+        return { sh, box, eyes, half: D / 2 };
     }
 
     tick(dt, t) {
@@ -161,6 +161,7 @@ export class School {
         c.p = P.over ? P : null;
         c.drowsy = drowsy(W.hour, W.idle);
         c.lazy = lazy(W.hour, W.idle);
+        c.night = night(W.hour);
         this._wake = this._idle > 60 && W.idle < 5 ? 2 : this._wake - 1;
         c.wake = this._wake > 0;
         this._idle = W.idle;
@@ -193,16 +194,17 @@ export class School {
 
     // Moving windows, plus a 1 s pulse for any window that just appeared.
     _threatsFrom(windows, dt) {
-        const th = this._threats, first = !this._seen;
+        const th = this._threats, first = this._maxId < 0;
+        let max = this._maxId;
         th.length = 0;
-        this._seen ??= new Set();
         for (const w of windows) {
             if (w.moving) th.push(w);
-            if (w.id === undefined || this._seen.has(w.id)) continue;
-            this._seen.add(w.id);  // ponytail: grows with windows ever opened; prune if sessions run for months
+            if (!(w.id > this._maxId)) continue;  // mutter window ids only grow: bigger than any seen = new
+            max = Math.max(max, w.id);
             const p = !first && this._pulses.find(q => q.t <= 0);
             if (p) { p.x = w.x; p.y = w.y; p.w = w.w; p.h = w.h; p.t = 1; }
         }
+        this._maxId = Math.max(max, 0);
         for (const p of this._pulses) if ((p.t -= dt) > 0) th.push(p);
     }
 
@@ -258,8 +260,7 @@ export class School {
         const row = Math.round(side / (Math.PI / 2) * (m.rows - 1));
         const col = bd === f.bodies[0] ? Math.floor(f.ph * sh.cols) % sh.cols : Math.round(f.puff * (sh.cols - 1));
         const i = row * sh.cols + col;
-        if (i !== bd.i) bd.child.set_translation(-(i % sh.cols) * sh.w, -Math.floor(i / sh.cols) * sh.h, 0);  // = sh.show, minus its per-call array
-        bd.i = i;
+        sh.show(box, i);
         // nose dips into climbs and dives, only as much as the fish is side-on
         const pitch = Math.max(-0.45, Math.min(0.45, Math.atan2(Math.sin(s.dir), Math.abs(c)))) * Math.cos(side);
         const rot = Math.round((mirror ? -pitch : pitch) * 573) / 10;  // 0.1 degree steps, set only on change
@@ -288,8 +289,8 @@ export class School {
             const e = bd.eyes[j], v = eyes[j], on = !!v;
             if (e.on !== on) (e.on = on) ? e.a.show() : e.a.hide();
             if (!on) continue;
-            const [x, y, r, sq] = v, z = Math.round(r / f.m.rmax * 50) / 50;  // 2 % steps: fewer rescales
-            if (e.z !== z || e.q !== sq) { e.a.set_scale(z * sq, z); e.z = z; e.q = sq; }
+            const [x, y, r, sq] = v, z = Math.round(r / f.m.rmax * 50) / 50, q = Math.round(sq * 50) / 50;  // 2 % steps: fewer rescales
+            if (e.z !== z || e.q !== q) { e.a.set_scale(z * q, z); e.z = z; e.q = q; }
             const ex = Math.round((x - bd.half + f.look[0] * r * 0.32 * sq) * 2) / 2;
             const ey = Math.round((y - bd.half + f.look[1] * r * 0.32) * 2) / 2;
             if (ex !== e.x || ey !== e.y) e.a.set_translation(e.x = ex, e.y = ey, 0);

@@ -45,7 +45,7 @@ export default class InteractiveWallpaper extends Extension {
         this._on(global.display, 'window-entered-monitor', update);
         this._on(global.display, 'grab-op-begin', (_d, w) => {
             this._grab = w;
-            this._raw.grabbing = w?.get_id() ?? null;
+            this._raw.grabbing = w?.get_stable_sequence() ?? null;
         });
         this._on(global.display, 'grab-op-end', () => {
             this._grab = this._raw.grabbing = null;
@@ -60,10 +60,11 @@ export default class InteractiveWallpaper extends Extension {
         // Past the user's blank delay nobody can see the tank: pause, and wake on the first input.
         // Idle watches (unlike get_idletime) respect apps holding the screen awake, e.g. a video.
         this._session = new Gio.Settings({schema_id: 'org.gnome.desktop.session'});
+        this._idle = global.backend.get_core_idle_monitor();
         this._blank = false;
         this._idleWatch = this._activeWatch = 0;
         const watchIdle = () => {
-            const idle = global.backend.get_core_idle_monitor(), delay = this._session.get_uint('idle-delay');
+            const idle = this._idle, delay = this._session.get_uint('idle-delay');
             if (this._idleWatch)
                 idle.remove_watch(this._idleWatch);
             this._idleWatch = delay && idle.add_idle_watch(delay * 1000, () => {
@@ -93,9 +94,9 @@ export default class InteractiveWallpaper extends Extension {
         Main.messageTray.getSources().forEach(s => s.disconnectObject(this));
         this._stop();
         for (const w of [this._idleWatch, this._activeWatch].filter(Boolean))
-            global.backend.get_core_idle_monitor().remove_watch(w);
+            this._idle.remove_watch(w);
         this._clear();
-        this._sigs = this._tanks = this._cache = this._cancel = this._scene = this._grab = this._session = null;
+        this._sigs = this._tanks = this._cache = this._cancel = this._scene = this._grab = this._session = this._idle = null;
         this._settings = this._iface = this._raw = this.stats = null;
     }
 
@@ -201,7 +202,7 @@ export default class InteractiveWallpaper extends Extension {
             if (!w.showing_on_its_workspace() || w.get_window_type() === Meta.WindowType.DESKTOP)
                 continue;
             const r = w.get_frame_rect();
-            rects.push({x: r.x, y: r.y, w: r.width, h: r.height, id: w.get_id()});
+            rects.push({x: r.x, y: r.y, w: r.width, h: r.height, id: w.get_stable_sequence()});
             const max = w.is_maximized?.() ?? w.get_maximized() === Meta.MaximizeFlags.BOTH;
             if (max || w.is_fullscreen())
                 covered.add(w.get_monitor());
@@ -242,7 +243,7 @@ export default class InteractiveWallpaper extends Extension {
         r.px = x;
         r.py = y;
         r.down = !!(mods & Clutter.ModifierType.BUTTON1_MASK);
-        r.idleMs = global.backend.get_core_idle_monitor().get_idletime();
+        r.idleMs = this._idle.get_idletime();
         r.hour = d.getHours() + d.getMinutes() / 60;
         if (this._grab) {  // one rect per tick while a window is dragged
             const g = this._grab.get_frame_rect(), o = r.rects.find(q => q.id === r.grabbing);

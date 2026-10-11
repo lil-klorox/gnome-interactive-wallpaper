@@ -72,7 +72,12 @@ export class Tank {
             if (!a) break;
             a.set_pivot_point(0.5, 0);
             const base = 8 + 6 * Math.sin(i * 5.1), ph = i * 1.7;
-            this._slow.push(t => { a.set_rotation_angle(Clutter.RotateAxis.Z_AXIS, base + 2.5 * Math.sin(t * 0.06 + ph)); a.set_opacity(Math.round(this._rays * (110 + 90 * Math.sin(t * 0.11 + ph)))); });
+            let rot = NaN, op = -1;  // 0.1 degree steps; set only on change
+            this._slow.push(t => {
+                const r = Math.round((base + 2.5 * Math.sin(t * 0.06 + ph)) * 10) / 10, o = Math.round(this._rays * (110 + 90 * Math.sin(t * 0.11 + ph)));
+                if (r !== rot) a.set_rotation_angle(Clutter.RotateAxis.Z_AXIS, rot = r);
+                if (o !== op) a.set_opacity(op = o);
+            });
         }
         for (const [n, k] of [['far0', 0.2], ['far1', 0.35], ['far2', 0.5]]) {
             const m = this._m[n];
@@ -220,7 +225,7 @@ export class Tank {
             lidA.set_scale(at.chest.scale_x, at.chest.scale_y);
         }
         const diver = at.diver;
-        let next = 0, burst = 0, dnext = 2, frame = 0;
+        let next = 0, burst = 0, dnext = 2, frame = 0, tilt = NaN;
         const top = SAND - 50;  // a notification's bubble burst rises from here, top-centre
         this._anims.push((t, dt) => {
             const W = this._ctx.world;
@@ -238,7 +243,8 @@ export class Tank {
                 for (let k = 0; k < 4; k++) this._emit(valve[0] + k * 2, valve[1] - k * 14, 0.35 + Math.random() * 0.45);
                 dnext = 3 + Math.random() * 5;
             }
-            if (diver) diver.set_rotation_angle(Clutter.RotateAxis.Z_AXIS, 0.8 * Math.sin(t * 0.37));
+            const r = Math.round(8 * Math.sin(t * 0.37)) / 10;  // 0.1 degree steps
+            if (diver && r !== tilt) diver.set_rotation_angle(Clutter.RotateAxis.Z_AXIS, tilt = r);
             if (lidA) {
                 const o = Math.max(0, Math.sin(t * 0.17)) ** 4, f = Math.round(o * 9);
                 if (f !== frame) lidA.content = lid[frame = f];
@@ -272,7 +278,7 @@ export class Tank {
         if (!m?.base || !frames.every(Boolean)) return;
         const a = this._actor(parent, frames[0], {width: m.w, height: m.h, y: y - m.base[1]});
         a.set_pivot_point(m.base[0] / m.w, 0);
-        let x = x0 + (x1 - x0) * 0.3, dir = 1, ph = 0, f = 0, rest = 0;
+        let x = x0 + (x1 - x0) * 0.3, dir = 1, ph = 0, f = 0, rest = 0, tx = NaN;
         this._anims.push((t, dt) => {
             if ((rest -= dt) > 0) return;
             ph += dt * 5;
@@ -281,7 +287,8 @@ export class Tank {
             x += dir * dt * 9 * Math.max(0, Math.sin(ph / 8 * TAU));
             if (x > x1 || x < x0) { dir = -dir; a.scale_x = dir; x = Math.min(x1, Math.max(x0, x)); }
             if (Math.random() < dt / 40) rest = 3 + Math.random() * 6;
-            a.x = x - m.base[0];
+            const nx = Math.round((x - m.base[0]) * 4) / 4;  // translation, not x: no relayout
+            if (nx !== tx) a.set_translation(tx = nx, 0, 0);
         });
     }
 

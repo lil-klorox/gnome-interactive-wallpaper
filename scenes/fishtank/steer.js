@@ -4,9 +4,9 @@
 
 // o: {x, y, cruise px/s, turn rad/s, pad px, school id, burst s, coast s}
 export function makeFish(o, rand = Math.random) {
-    const coast = o.coast ?? 2;
+    const coast = o.coast ?? 2, dir = rand() < 0.5 ? 0 : Math.PI;
     return {
-        x: o.x, y: o.y, dir: rand() < 0.5 ? 0 : Math.PI, speed: o.cruise * 0.5,
+        x: o.x, y: o.y, dir, speed: o.cruise * 0.5, vx: Math.cos(dir) * o.cruise * 0.5, vy: 0,  // v: cached from dir/speed
         cruise: o.cruise, turn: o.turn ?? 2.2, pad: o.pad ?? 20, school: o.school ?? null,
         wander: rand() * 6.283, wr: 0, burst: o.burst ?? 0.4, coast, beat: rand() * coast, beatLen: coast,
     };
@@ -17,7 +17,7 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 // Advance one fish. it = intent from brain.js, b = swim bounds, all = fish sharing its layer.
 export function step(f, dt, it, b, all, rand = Math.random) {
     dt = Math.min(dt, 0.1);
-    const vx = Math.cos(f.dir) * f.speed, vy = Math.sin(f.dir) * f.speed, top = f.cruise * it.speed;
+    const vx = f.vx, vy = f.vy, top = f.cruise * it.speed;
     const flee = it.ax !== undefined, wander = !flee && it.tx === undefined;
     let ax = 0, ay = 0;  // wanted change in velocity, summed from each behaviour
 
@@ -58,13 +58,14 @@ export function step(f, dt, it, b, all, rand = Math.random) {
         const d = Math.sqrt(d2) || 1, r = f.pad + o.pad + 12;
         if (d < r) { ax += dx / d * (1 - d / r) * f.cruise * 3; ay += dy / d * (1 - d / r) * f.cruise * 3; }
         if ((-dx * cd - dy * sd) / d < -0.7) continue;
-        const ovx = Math.cos(o.dir) * o.speed, ovy = Math.sin(o.dir) * o.speed;
+        const ovx = o.vx, ovy = o.vy;
         if (f.school && o.school === f.school && d < 250) { sn++; sx += o.x; sy += o.y; svx += ovx; svy += ovy; }
         else if (sh) { hn++; hx += o.x; hy += o.y; hvx += ovx; hvy += ovy; }
     }
     if (sn) {
-        ax += (sx / sn - f.x) * 0.5 + (svx / sn - vx) * 0.8;
-        ay += (sy / sn - f.y) * 0.5 + (svy / sn - vy) * 0.8;
+        const k = 0.5 * (it.tight ?? 1);
+        ax += (sx / sn - f.x) * k + (svx / sn - vx) * 0.8;
+        ay += (sy / sn - f.y) * k + (svy / sn - vy) * 0.8;
     }
     if (hn) {
         ax += (hx / hn - f.x) * 0.06 * sh + (hvx / hn - vx) * 0.25 * sh;
@@ -81,6 +82,8 @@ export function step(f, dt, it, b, all, rand = Math.random) {
         f.dir = Math.atan2(Math.sin(f.dir), Math.cos(f.dir));
     }
     f.speed = Math.min(sp, Math.max(top, f.cruise * 0.3) * 1.6);
-    f.x = clamp(f.x + Math.cos(f.dir) * f.speed * dt, x0, x1);
-    f.y = clamp(f.y + Math.sin(f.dir) * f.speed * dt, y0, y1);
+    f.vx = Math.cos(f.dir) * f.speed;
+    f.vy = Math.sin(f.dir) * f.speed;
+    f.x = clamp(f.x + f.vx * dt, x0, x1);
+    f.y = clamp(f.y + f.vy * dt, y0, y1);
 }

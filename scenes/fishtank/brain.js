@@ -7,6 +7,7 @@
 //         speed       x cruise speed
 //         band        [top, bottom] fractions of the water to wander in
 //         shoal       0..1 pull toward nearby fish of any species
+//         tight       x pull toward own school (default 1)
 //         look        {x, y} the eyes follow, or null for straight ahead
 //         face        turn toward the viewer (curious hover)
 //         chomp       mouth busy (nibbling)
@@ -15,7 +16,8 @@
 //                mates: [{f, b}] fish sharing the layer (motion + brain, includes this one), dt, rand,
 //                threats: [{x,y,w,h}] rects to flee, food: [{x,y,live}] flakes, attn: {x,y}|null
 //                notification spot (attnNew on its first tick), wake: user just came back,
-//                drowsy: rest weight multiplier (night/idle), lazy: speed multiplier }
+//                drowsy: rest weight multiplier (night/idle), lazy: speed multiplier,
+//                night: night hours or dark mode }
 
 export const FAST = 1400;  // px/s cursor speed that startles a fish with nerve 1
 export const SEE = 260;    // px a fish notices the cursor from
@@ -25,9 +27,10 @@ export const BORING = 8;   // s a parked cursor takes to stop being interesting
 // Per-species personality, plain data. curious: chance to approach instead of flee.
 // nerve: x FAST it tolerates. attention: x seconds curiosity lasts. dash: flee speed.
 // band: home depth. social: shoal pull. nibble/rest/follow/gulp: what idle turns into.
+// huddle: night band; wandering at night the school packs in tighter, lower and slower.
 export const PERSONALITY = {
     clown: { curious: 0.7, nerve: 0.8, attention: 1.2, dash: 4, band: [0.35, 0.75], social: 0.3, nibble: 0.4, rest: 0.5, follow: 0.3 },
-    tetra: { curious: 0.15, nerve: 0.5, attention: 0.6, dash: 6, band: [0.2, 0.55], social: 1, nibble: 0.2 },
+    tetra: { curious: 0.15, nerve: 0.5, attention: 0.6, dash: 6, band: [0.2, 0.55], social: 1, nibble: 0.2, huddle: [0.55, 0.8] },
     angel: { curious: 0.55, nerve: 1, attention: 1.4, dash: 3, band: [0.3, 0.7], social: 0.4, nibble: 0.3, rest: 0.4, follow: 0.4 },
     goldfish: { curious: 0.85, nerve: 1.3, attention: 1.6, dash: 3, band: [0.3, 0.9], social: 0.3, nibble: 1, rest: 0.3, follow: 0.2 },
     tang: { curious: 0.3, nerve: 0.7, attention: 0.8, dash: 5, band: [0.3, 0.8], social: 0.5, nibble: 0.5, rest: 0.1, follow: 0.5 },
@@ -207,6 +210,7 @@ export function think(b, c) {
         r = STATES[r].update(b, c);
     }
     if (typeof r === 'string') r = { speed: 0.6, look: null };
+    if (c.night && b.pers.huddle && r.band) { r.band = b.pers.huddle; r.tight = 2; r.speed *= 0.8; }
     if (b.dart > 0) r.speed *= 2.5;
     else if (b.state !== 'flee') r.speed *= c.lazy ?? 1;
     return r;
