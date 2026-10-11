@@ -62,16 +62,10 @@ export default class FishtankExtension extends Extension {
     _build(i) {
         const mgr = Main.layoutManager._bgManagers[i];
         const mon = Main.layoutManager.monitors[i];
-        const widget = new St.Widget({reactive: true, width: mon.width, height: mon.height});
-        const t = {widget, monitor: mon.index, pointer: {x: 0, y: 0, speed: 0, time: 0}, over: false};
+        // Non-reactive: the pointer is polled in _tick, so desktop clicks/menus are untouched.
+        const widget = new St.Widget({width: mon.width, height: mon.height});
+        const t = {widget, monitor: mon.index, pointer: {x: 0, y: 0, speed: 0}, over: false};
         this._tanks[i] = t;
-        widget.connect('motion-event', (a, ev) => this._motion(t, a, ev));
-        widget.connect('leave-event', (a, ev) => {
-            const rel = ev.get_related?.();
-            if (!rel || !a.contains(rel))
-                t.over = false;
-            return Clutter.EVENT_PROPAGATE;
-        });
         // Fires on disable, on rebuild, and when the shell destroys the bg actor under us.
         widget.connect('destroy', () => {
             mgr.disconnect(t.mgrId);
@@ -100,17 +94,25 @@ export default class FishtankExtension extends Extension {
         }
     }
 
-    _motion(t, actor, ev) {
-        const [sx, sy] = ev.get_coords();
-        const [, x, y] = actor.transform_stage_point(sx, sy);
-        const p = t.pointer, now = ev.get_time();
-        if (t.over && now > p.time)
-            p.speed = 0.5 * p.speed + 0.5 * Math.hypot(x - p.x, y - p.y) * 1000 / (now - p.time);
-        p.x = x;
-        p.y = y;
-        p.time = now;
-        t.over = true;
-        return Clutter.EVENT_PROPAGATE;
+    // Polled, not event-driven: motion events never reach the background when a desktop-icons
+    // or blur extension sits above it. "Over" = the topmost thing under the cursor is the desktop.
+    _pointer(dt) {
+        const [x, y] = global.get_pointer();
+        const a = Main.overview.visible ? null : global.stage.get_actor_at_pos(Clutter.PickMode.REACTIVE, x, y);
+        let w = a;
+        while (w && !(w instanceof Meta.WindowActor))
+            w = w.get_parent();
+        const bare = !!a && (a === global.stage || Main.layoutManager._backgroundGroup.contains(a) ||
+            w?.meta_window?.get_window_type() === Meta.WindowType.DESKTOP);
+        for (const t of this._tanks) {
+            const m = Main.layoutManager.monitors[t.monitor], p = t.pointer;
+            const lx = x - m.x, ly = y - m.y;
+            const over = bare && lx >= 0 && ly >= 0 && lx < m.width && ly < m.height;
+            p.speed = over && t.over ? 0.5 * p.speed + 0.5 * Math.hypot(lx - p.x, ly - p.y) / dt : 0;
+            p.x = lx;
+            p.y = ly;
+            t.over = over;
+        }
     }
 
     _update() {
@@ -148,11 +150,11 @@ export default class FishtankExtension extends Extension {
         const dt = Math.min(now - this._last, 0.1);
         this._last = now;
         let live = false;
+        this._pointer(Math.max(dt, 0.001));
         for (const t of this._tanks) {
             if (t.dead || t.paused)
                 continue;
             try {
-                t.pointer.speed *= Math.exp(-4 * dt);
                 t.scene.tick(dt, now - this._t0);
                 t.school.tick(dt, now - this._t0, t.over ? t.pointer : null);
                 live = true;

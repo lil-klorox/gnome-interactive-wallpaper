@@ -36,8 +36,9 @@ fishLayers[1], foreground plants. Gentle parallax = far layers drift/sway less t
 - enable: for each `Main.layoutManager._bgManagers[i].backgroundActor`, add a reactive `St.Widget`
   sized to its monitor; build Scene then School(scene.fishLayers, scene.swimBounds). Rebuild on
   `monitors-changed` and when the bg manager emits `changed` (background actor replaced).
-- Pointer: `motion-event` on the widget → `transform_stage_point` → pointer {x,y,speed};
-  `leave-event` → null. Return `Clutter.EVENT_PROPAGATE` so the desktop right-click menu still works.
+- Pointer: polled each tick with `global.get_pointer()`; "over the desktop" = the reactive actor under it is
+  the stage, the background group, or a DESKTOP-type window (desktop-icons). Widget is non-reactive, so
+  desktop clicks/menus are untouched.
   Only the main background (not overview thumbnails/lock screen).
 - One `GLib.timeout_add` (~30 fps, PRIORITY_DEFAULT_IDLE-ish) calls tick on all tanks; wrap tick in
   try/catch, log once and stop that tank on error (a throw must never break gnome-shell).
