@@ -1,9 +1,11 @@
 # gnome-interactive-wallpaper — design
 
-A GNOME Shell extension (ESM, GNOME 45+) that draws a living wallpaper inside the shell as
-Clutter/St actors in each monitor's background actor. The host owns the background slot, the
-clock, pause rules, a polled `world` snapshot, textures and a per-scene JSON store. A scene is a
-folder with one `create(ctx)`. Fishtank is the first scene; `dot` is the minimal example.
+A small engine for living wallpapers that runs inside GNOME Shell as one extension (ESM,
+GNOME 45+), drawing Clutter/St actors in each monitor's background actor. The engine (the "host")
+does the hard parts once, so scenes stay small: it owns the background slot, the clock, pause and
+idle rules, a polled `world` snapshot, texture sizing/loading/sharing under a memory budget, a
+per-scene JSON store and a watchdog. A scene is a folder with one `create(ctx)`. Fishtank is the
+showcase scene that proves the engine; `dot` is the minimal example.
 No subprocess, no WebKit, no video, no IPC, no deps.
 
 ## Decisions
