@@ -210,7 +210,7 @@ def pbr(name, c1, c2=None, rough=0.6, metal=0.0, scale=3.0, bump=0.25, moss=0.0,
         wv = N(m, 'TexWave', Vector=co, _bands_direction='Z', Scale=scale * 0.8, Distortion=6.0,
                Detail=4.0, **{'Detail Scale': 1.5})
         height = M(m, 'MULTIPLY_ADD', (wv, 'Fac'), strata, height)
-        col = (N(m, 'Mix', _data_type='RGBA', _blend_type='OVERLAY', Factor=0.35, A=col, B=(wv, 'Color')), 'Result')
+        col = (N(m, 'Mix', _data_type='RGBA', _blend_type='OVERLAY', Factor=0.15, A=col, B=(wv, 'Color')), 'Result')
     if cracks:
         cv = N(m, 'TexVoronoi', Vector=co, Scale=scale * 1.3, _feature='DISTANCE_TO_EDGE')
         cw = N(m, 'MapRange', Value=(cv, 'Distance'), **{'From Min': 0.0, 'From Max': 0.012})
@@ -344,32 +344,51 @@ def ground(size=8.0, z=0.0, soft=3.0, power=3000):
 def sprite(name, points=None, pad=6, cut=8, extra=None, crop=True):
     """Render assets/scene/<name>.png cropped to its visible pixels, and record its size plus
     named world points (anchors/pivots/emitters) in pixel coords in assets/scene/manifest.json.
-    crop=False keeps the full frame (animation frames that must overlay each other exactly)."""
+    crop=False keeps the full frame: animation frames are cropped together later by crop_frames."""
     s = bpy.context.scene
-    path = render(f'scene/{name}.png')
-    img = bpy.data.images.load(path)
-    W, H = img.size
-    px = np.array(img.pixels[:], dtype=np.float32).reshape(H, W, 4)[::-1]  # top row first
-    bpy.data.images.remove(img)
-    ys, xs = np.nonzero(px[:, :, 3] > cut / 255)
-    x0, x1 = max(0, xs.min() - pad), min(W, xs.max() + 1 + pad)
-    y0, y1 = max(0, ys.min() - pad), min(H, ys.max() + 1 + pad)
-    if not crop:
-        x0, y0, x1, y1 = 0, 0, W, H
-    crop = px[y0:y1, x0:x1]
-    out = bpy.data.images.new(name, x1 - x0, y1 - y0, alpha=True)
-    out.pixels[:] = crop[::-1].ravel()
-    out.filepath_raw, out.file_format = path, 'PNG'
-    out.save()
-    bpy.data.images.remove(out)
-    ent = {'w': int(x1 - x0), 'h': int(y1 - y0)}
+    render(f'scene/{name}.png')
+    W, H = s.render.resolution_x, s.render.resolution_y
+    ent = {'w': W, 'h': H}
     for k, co in (points or {}).items():
         v = world_to_camera_view(s, s.camera, Vector(co))
-        ent[k] = [round(float(v.x * W - x0), 1), round(float((1 - v.y) * H - y0), 1)]
+        ent[k] = [round(float(v.x * W), 1), round(float((1 - v.y) * H), 1)]
     ent.update(extra or {})
     manifest(name, ent)
-    print('sprite', name, ent)
-    return ent
+    return crop_frames([name], pad, cut)[0] if crop else ent
+
+
+def crop_frames(names, pad=6, cut=8):
+    """Crop same-size PNGs to the union of their visible pixels (so frames still overlay), shift
+    their manifest points to match and record the crop offset as ox/oy."""
+    paths = [os.path.join(ASSETS, 'scene', n + '.png') for n in names]
+    pxs = []
+    for p in paths:
+        img = bpy.data.images.load(p)
+        W, H = img.size
+        pxs.append(np.array(img.pixels[:], dtype=np.float32).reshape(H, W, 4)[::-1])  # top row first
+        bpy.data.images.remove(img)
+    a = np.max([p[:, :, 3] for p in pxs], axis=0) > cut / 255
+    rows, cols = np.nonzero(a.sum(1) >= 3)[0], np.nonzero(a.sum(0) >= 3)[0]  # ignore stray noise specks
+    ys, xs = rows, cols
+    x0, x1 = max(0, xs.min() - pad), min(W, xs.max() + 1 + pad)
+    y0, y1 = max(0, ys.min() - pad), min(H, ys.max() + 1 + pad)
+    mp = os.path.join(ASSETS, 'scene', 'manifest.json')
+    ents = []
+    for n, p, px in zip(names, paths, pxs):
+        out = bpy.data.images.new(n, int(x1 - x0), int(y1 - y0), alpha=True)
+        out.pixels[:] = px[y0:y1, x0:x1][::-1].ravel()
+        out.filepath_raw, out.file_format = p, 'PNG'
+        out.save()
+        bpy.data.images.remove(out)
+        ent = json.load(open(mp)).get(n, {})
+        for k, v in ent.items():
+            if isinstance(v, list) and len(v) == 2:
+                ent[k] = [round(v[0] - float(x0), 1), round(v[1] - float(y0), 1)]
+        ent.update(w=int(x1 - x0), h=int(y1 - y0), ox=ent.get('ox', 0) + int(x0), oy=ent.get('oy', 0) + int(y0))
+        manifest(n, ent)
+        print('sprite', n, ent)
+        ents.append(ent)
+    return ents
 
 
 def manifest(name, ent):
@@ -417,12 +436,12 @@ def rock(size, sink=0.3, sd=1, facets=0.015, loc=(0, 0, 0)):
 
 
 def stone(name, moss=0.4, c1=(0.07, 0.065, 0.06), c2=(0.2, 0.17, 0.13), scale=1.6):
-    return pbr(name, c1, c2, rough=0.85, scale=scale, bump=0.5, vor=0.2, moss=moss, grime=0.7, cracks=0.4, strata=0.3)
+    return pbr(name, c1, c2, rough=0.85, scale=scale, bump=0.5, vor=0.2, moss=moss, grime=0.7, cracks=0.4, strata=0.12)
 
 
 def sand_mat(wrap=0.0):
     """Wet aquarium sand with coloured grains; the sand bed and the berms props sink into share it."""
-    m = pbr('sand', (0.36, 0.29, 0.19), (0.55, 0.46, 0.32), rough=0.75, scale=0.6, bump=0.25, grime=0.5, wrap=wrap)
+    m = pbr('sand', (0.24, 0.14, 0.055), (0.5, 0.34, 0.16), rough=0.75, scale=0.6, bump=0.3, grime=0.6, wrap=wrap)
     nt = m.node_tree
     bs = principled(m)
     # coloured grains: tiny voronoi cells, a few tinted dark / rust / white

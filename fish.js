@@ -25,7 +25,7 @@ const SPECIES = [
     { name: 'betta', n: 1, cruise: 45, burst: 0.5, coast: 4, turn: 1.8 },
 ];
 const YAW_RATE = 3.5;  // rad/s a fish swings round through the front view
-const FAR = { scale: 0.6, opacity: 165 };
+const FAR = { scale: 0.7, opacity: 165 };
 
 // One sheet (rows = yaw angles, columns = frames) -> an St.ImageContent per frame, shared by every
 // fish of that species. GNOME 48 wants the Cogl context first; older shells don't take it.
@@ -49,6 +49,22 @@ function loadSheet(file, m) {
         }
     }
     return frames;
+}
+
+// Sheets are shared by every fish of a species and by every School (one per monitor), and
+// dropped when the last School lets go.
+const sheets = new Map();  // name -> {m, users}
+
+function acquire(name) {
+    let e = sheets.get(name);
+    if (!e) sheets.set(name, e = { m: loadSpecies(name), users: 0 });
+    e.users++;
+    return e.m;
+}
+
+function release(name) {
+    const e = sheets.get(name);
+    if (e && --e.users <= 0) sheets.delete(name);
 }
 
 function loadSpecies(name) {
@@ -98,11 +114,13 @@ export class School {
         this._motion = [[], []];  // motion states per layer, for steering
         const S = Math.min(1, Math.max(0.5, b.h / 1000));  // smaller fish on small screens
         const failed = [];
+        this._held = [];
         let k = 0;
         for (const sp of SPECIES) {
             let m;
             try {
-                m = loadSpecies(sp.name);
+                m = acquire(sp.name);
+                this._held.push(sp.name);
             } catch (e) {
                 failed.push(`${sp.name} (${e.message})`);
                 continue;
@@ -119,7 +137,7 @@ export class School {
                     school: sp.school, turn: sp.turn, burst: sp.burst, coast: sp.coast,
                 });
                 const f = { m, s, sc, layer, brain: makeBrain(pers), ph: Math.random(), yaw: Math.cos(s.dir) > 0 ? 0 : Math.PI,
-                    puff: 0, look: [0, 0], sheet: null, shown: null };
+                    puff: 0, look: [0, 0], sheet: null, shown: null, rot: null, mirror: null };
                 f.box = new Clutter.Actor({ reactive: false, opacity: layer ? 255 : FAR.opacity });
                 f.box.set_content_scaling_filters(Clutter.ScalingFilter.TRILINEAR, Clutter.ScalingFilter.LINEAR);
                 const D = Math.ceil(m.rmax * 2);
@@ -176,9 +194,10 @@ export class School {
         }
         // nose dips into climbs and dives, only as much as the fish is side-on
         const pitch = Math.max(-0.45, Math.min(0.45, Math.atan2(Math.sin(s.dir), Math.abs(c)))) * Math.cos(side);
-        box.rotation_angle_z = (mirror ? -pitch : pitch) * 180 / Math.PI;
-        box.set_scale(mirror ? -f.sc : f.sc, f.sc);
-        box.set_position(s.x - sh.anchor[0], s.y - sh.anchor[1]);
+        const rot = Math.round((mirror ? -pitch : pitch) * 573) / 10;  // 0.1 degree steps, set only on change
+        if (rot !== f.rot) box.rotation_angle_z = f.rot = rot;
+        if (mirror !== f.mirror) box.set_scale((f.mirror = mirror) ? -f.sc : f.sc, f.sc);
+        box.set_translation(s.x - sh.anchor[0], s.y - sh.anchor[1], 0);  // translation: no relayout
         this._pupils(f, sh.eyes[row][col], it, mirror, pitch, side, dt);
     }
 
@@ -197,11 +216,11 @@ export class School {
         f.look[1] += (ly - f.look[1]) * k;
         f.eyes.forEach((e, j) => {
             const v = eyes[j];
-            e.visible = !!v;
+            if (e.visible !== !!v) e.visible = !!v;
             if (!v) return;
             const [x, y, r, sq] = v, z = r / f.m.rmax;
-            e.set_scale(z * sq, z);
-            e.set_position(x - e.width / 2 + f.look[0] * r * 0.32 * sq, y - e.height / 2 + f.look[1] * r * 0.32);
+            if (e.scale_y !== z || e.scale_x !== z * sq) e.set_scale(z * sq, z);
+            e.set_translation(x - e.width / 2 + f.look[0] * r * 0.32 * sq, y - e.height / 2 + f.look[1] * r * 0.32, 0);
         });
     }
 
@@ -210,5 +229,7 @@ export class School {
         this._fish = [];
         this._mates = [[], []];
         this._motion = [[], []];
+        for (const n of this._held) release(n);
+        this._held = [];
     }
 }

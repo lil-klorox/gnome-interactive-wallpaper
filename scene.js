@@ -13,6 +13,8 @@ const REF = 1440;        // art is rendered for a 1440 px tall screen; everythin
 const SAND = 1150;       // ref row of the sand's back edge
 const DRIFT = 22;        // parallax: how far (ref px) the nearest layer sways with the slow camera bob
 let warned = false;
+const cache = new Map();  // textures shared by every monitor's scene, freed when the last scene goes
+let users = 0;
 const warn = (e, what) => { if (!warned) logError(e, `fishtank: scenery ${what}`); warned = true; };
 
 // Props on the sand, by screen x fraction and the ref row their base sits on; sorted back to front.
@@ -21,7 +23,8 @@ const PROPS = [
     ['rock_a', 0.53, 1262, 0.9], ['chest', 0.6, 1290, 1], ['bubbler', 0.71, 1268, 1], ['diver', 0.86, 1255, 1],
     ['rock_d', 0.94, 1300, 1], ['rock_a', 0.03, 1335, 0.7],
 ];
-const SPECIES = ['valli', 'sword', 'jfern', 'cabomba', 'ludwigia', 'anubias'];
+const SPECIES = ['valli', 'valli', 'sword', 'sword', 'jfern', 'cabomba', 'ludwigia', 'anubias', 'anubias'];
+const MIDPLANTS = [0.025, 0.2, 0.265, 0.345, 0.545, 0.67, 0.765, 0.905, 0.985];  // in the gaps between props
 
 function upload(pb) {
     const img = St.ImageContent.new_with_preferred_size(pb.width, pb.height);
@@ -35,25 +38,33 @@ function upload(pb) {
 
 export class Scene {
     constructor(root, w, h) {
-        const s = h / REF, W = w / s;
         this._anims = [];
+        this._slow = [];  // slow sway: each runs every third tick (a third of the cost, steps stay far below a pixel)
+        this._n = 0;
         this._pool = [];
-        this._tex = new Map();
-        this.bytes = 0;
+        this._live = true;
+        users++;
         this._box = new Clutter.Actor({width: w, height: h, clip_to_allocation: true});
         root.add_child(this._box);
         this._box.connect('destroy', () => { this._box = null; });
         this.fishLayers = [0, 1].map(() => new Clutter.Actor({width: w, height: h}));
         this.swimBounds = {x: 0, y: h * 0.06, w, h: h * 0.8};
         try {
-            this._m = JSON.parse(new TextDecoder().decode(GLib.file_get_contents(DIR + 'manifest.json')[1]));
-        } catch (e) {
-            warn(e, 'manifest missing, plain water instead');
-            this._box.add_child(new St.Widget({width: w, height: h,
-                style: 'background-gradient-direction: vertical; background-gradient-start: #1d5d6c; background-gradient-end: #031a26;'}));
-            this.fishLayers.forEach(l => this._box.add_child(l));
-            return;
+            this._build(w, h);
+        } catch (e) {  // never take the shell down over scenery: keep whatever got built, plus the fish
+            warn(e, 'failed, showing what loaded');
+            if (!this._box.get_n_children())
+                this._box.add_child(new St.Widget({width: w, height: h,
+                    style: 'background-gradient-direction: vertical; background-gradient-start: #1d5d6c; background-gradient-end: #031a26;'}));
+            this.fishLayers.forEach(l => l.get_parent() || this._box.add_child(l));
         }
+        this._pb = null;
+        System.gc();  // decoded PNGs are only referenced from JS wrappers now; free them
+    }
+
+    _build(w, h) {
+        const s = h / REF, W = w / s;
+        this._m = JSON.parse(new TextDecoder().decode(GLib.file_get_contents(DIR + 'manifest.json')[1]));
         // one scaled container per depth; k = how much it moves with the camera bob
         const layer = k => {
             const a = new Clutter.Actor({scale_x: s, scale_y: s});
@@ -69,7 +80,7 @@ export class Scene {
             if (!a) break;
             a.set_pivot_point(0.5, 0);
             const base = 8 + 6 * Math.sin(i * 5.1), ph = i * 1.7;
-            this._anims.push(t => { a.rotation_angle_z = base + 2.5 * Math.sin(t * 0.06 + ph); a.opacity = 110 + 90 * Math.sin(t * 0.11 + ph); });
+            this._slow.push(t => { a.rotation_angle_z = base + 2.5 * Math.sin(t * 0.06 + ph); a.opacity = 110 + 90 * Math.sin(t * 0.11 + ph); });
         }
         for (const [n, k] of [['far0', 0.2], ['far1', 0.35], ['far2', 0.5]]) {
             const m = this._m[n];
@@ -79,7 +90,7 @@ export class Scene {
         const sand = this._m.sand;
         if (sand) {
             this._tile(floor, 'sand', -DRIFT, REF - sand.h, W + 2 * DRIFT, 0);
-            for (const [v, op] of [[7, 150], [-11, 110]]) {
+            for (const [v, op] of [[7, 80], [-11, 55]]) {
                 const c = this._tile(floor, 'caustics', -DRIFT, REF - this._m.caustics?.h, W + 2 * DRIFT, v);
                 if (c) c.opacity = op;
             }
@@ -92,7 +103,7 @@ export class Scene {
         const mid = layer(0.75);
         const at = {};
         const items = [...PROPS];
-        for (let i = 0; i < 10; i++) items.push([null, r(), SAND + 60 + r() * 150, 0.7 + r() * 0.35]);
+        for (const fx of MIDPLANTS) items.push([null, fx + (r() - 0.5) * 0.02, SAND + 70 + r() * 140, 0.7 + r() * 0.35]);
         items.sort((a, b) => a[2] - b[2]);
         for (const [n, fx, y, k] of items) {
             if (!n) { this._plant(mid, fx * W, y, k, 1.8); continue; }
@@ -108,24 +119,22 @@ export class Scene {
             this._plant(front, fx * W + (r() - 0.5) * 40, REF + 30, 1.0 + r() * 0.4, 2.6);
         for (let i = 0; i < 12; i++)
             this._plant(front, r() * W, REF + 10, 0.8 + r() * 0.5, 3, 'hair');
-        System.gc();  // the decoded PNGs are only referenced from JS now; free them
     }
 
-    // Texture by sprite name (optionally a row band of it), uploaded once per scene.
+    // Texture by sprite name (optionally a row band of it, in PNG pixels), uploaded once.
     _img(name, y0 = 0, y1 = 0) {
         const key = `${name}:${y0}:${y1}`;
-        if (this._tex.has(key)) return this._tex.get(key);
+        if (cache.has(key)) return cache.get(key);
         let img = null;
         try {
             let pb = this._pb?.name === name ? this._pb.pb : GdkPixbuf.Pixbuf.new_from_file(`${DIR}${name}.png`);
             this._pb = {name, pb};
             if (y1) pb = pb.new_subpixbuf(0, y0, pb.width, y1 - y0);
             img = upload(pb);
-            this.bytes += pb.width * pb.height * 4;
         } catch (e) {
             warn(e, `art ${name} missing`);
         }
-        this._tex.set(key, img);
+        cache.set(key, img);
         return img;
     }
 
@@ -185,7 +194,7 @@ export class Scene {
                 : {x: -m.base[0], y: top - m.base[1], width: m.w, height: bot - top});
             a.set_pivot_point(js[i][0] / m.w, (js[i][1] - top) / (bot - top));
             const ai = amp * (0.6 + 0.3 * i), base = i ? 0 : lean;
-            this._anims.push(t => { a.rotation_angle_z = base + ai * Math.sin(t * sp + ph - i * 0.6); });
+            this._slow.push(t => { a.rotation_angle_z = base + ai * Math.sin(t * sp + ph - i * 0.6); });
             par = a;
             prevTop = top;
         }
@@ -199,7 +208,7 @@ export class Scene {
         for (let i = 0; i < 90; i++) {
             const a = this._actor(layer, img, {width: bm.w, height: bm.h, visible: false});
             a.set_pivot_point(0.5, 0.5);
-            this._pool.push({a, live: false, x: 0, y: 0, v: 0, vmax: 0, amp: 0, f: 0, ph: 0, k: 0});
+            this._pool.push({a, live: false, x: 0, y: 0, v: 0, vmax: 0, amp: 0, f: 0, ph: 0});
         }
         const pt = (n, p) => {
             const a = at[n], m = this._m[n];
@@ -208,11 +217,11 @@ export class Scene {
         const stone = pt('bubbler', 'outlet'), valve = pt('diver', 'valve'), mouth = pt('chest', 'mouth');
         const lid = at.chest && [...Array(10).keys()].map(i => this._img(`chest_lid_${i}`));
         let lidA = null;
-        if (lid?.every(Boolean)) {
-            const m = this._m.chest;
-            lidA = this._actor(parent, lid[0], {x: at.chest.x, y: at.chest.y, width: m.w, height: m.h});
+        if (lid?.every(Boolean)) {  // lid frames are cropped on their own: ox/oy place them on the body
+            const cm = this._m.chest, lm = this._m.chest_lid_0, dx = lm.ox - cm.ox, dy = lm.oy - cm.oy;
+            lidA = this._actor(parent, lid[0], {x: at.chest.x + dx, y: at.chest.y + dy, width: lm.w, height: lm.h});
             parent.set_child_above_sibling(lidA, at.chest);
-            lidA.set_pivot_point(m.base[0] / m.w, m.base[1] / m.h);
+            lidA.set_pivot_point((cm.base[0] - dx) / lm.w, (cm.base[1] - dy) / lm.h);
             lidA.set_scale(at.chest.scale_x, at.chest.scale_y);
         }
         const diver = at.diver;
@@ -231,17 +240,15 @@ export class Scene {
             }
             if (diver) diver.rotation_angle_z = 0.8 * Math.sin(t * 0.37);
             if (lidA) {
-                const o = Math.max(0, Math.sin(t * 0.22)) ** 3, f = Math.round(o * 9);
+                const o = Math.max(0, Math.sin(t * 0.17)) ** 4, f = Math.round(o * 9);
                 if (f !== frame) lidA.content = lid[frame = f];
-                if (mouth && o > 0.7 && Math.random() < o * 0.2) this._emit(mouth[0] + (Math.random() - 0.5) * 60, mouth[1], 0.25 + Math.random() * 0.4);
+                if (mouth && o > 0.85 && Math.random() < 0.12) this._emit(mouth[0] + (Math.random() - 0.5) * 60, mouth[1], 0.25 + Math.random() * 0.4);
             }
             for (const b of this._pool) {
                 if (!b.live) continue;
                 b.v = Math.min(b.vmax, b.v + 50 * dt);
                 b.y -= b.v * dt;
                 b.a.set_position(b.x + b.amp * Math.sin(t * b.f + b.ph), b.y);
-                const g = b.k * (1 + 0.25 * (1 - b.y / SAND));  // bubbles swell a little as they rise
-                b.a.set_scale(g, g);
                 if (b.y < 40) { b.live = false; b.a.hide(); }
             }
         });
@@ -252,7 +259,7 @@ export class Scene {
         if (!b) return;
         const m = this._m.bubble;
         Object.assign(b, {live: true, x: x - m.w / 2, y: y - m.h / 2, v: 40 + 40 * size, vmax: 140 + 180 * size,
-            amp: 4 + 10 * Math.random(), f: 2 + 3 * Math.random(), ph: Math.random() * TAU, k: size});
+            amp: 4 + 10 * Math.random(), f: 2 + 3 * Math.random(), ph: Math.random() * TAU});
         b.a.set_scale(size, size);
         b.a.set_position(b.x, b.y);
         b.a.show();
@@ -281,11 +288,14 @@ export class Scene {
     tick(dt, t) {
         if (!this._box) return;
         for (const f of this._anims) f(t, dt);
+        for (let i = this._n++ % 3; i < this._slow.length; i += 3) this._slow[i](t);
     }
 
     destroy() {
         this._box?.destroy();
-        this._box = this._anims = this._pool = this._tex = this._pb = this.fishLayers = null;
+        this._box = this._anims = this._slow = this._pool = this._pb = this.fishLayers = null;
+        if (this._live && --users === 0) cache.clear();
+        this._live = false;
     }
 }
 
