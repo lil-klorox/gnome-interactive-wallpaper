@@ -80,3 +80,34 @@ so a tweak = edit script + re-render. Headless bpy scripts, not blender-mcp: rep
   sheets: swim-cycle frames x yaw angles (profile → 3/4 → front; mirror for the other side) so fish TURN in
   3D instead of flipping. Manifest gives frame size, counts, and per-frame eye position so fish.js overlays a
   pupil that looks at the cursor. Memory budget: all sheets together < ~80 MB decoded.
+
+### Look (user): fully realized 3D, not "corny 3D"
+Every piece should read as a real, lit, solid object with depth: think a polished animated film's aquarium,
+not plastic CG. So:
+- Render with Cycles (denoised; time is no object), PBR materials with real procedural texture detail: stone
+  grain + chipped edges, wood grain + rot, tarnished metal, wet sand, translucent fins (subsurface/transmission),
+  iridescent scales. Bevels + ambient occlusion + soft contact shadows so things sit IN the sand.
+- One consistent underwater light rig for scenery AND fish: soft key from the surface with projected caustic
+  texture, blue-green absorption/haze that grows with distance, so far plates are dimmer + bluer.
+- Avoid the corny look: no oversaturated plastic, no hard CG shadows, no uniform bevel-on-everything, no
+  perfect symmetry; add wear, moss, algae, dirt, color variation. Stylized proportions (a little dorky) are
+  fine, but surfaces and light must feel real.
+- Runtime keeps the depth: contact shadows baked under props, parallax between plates, depth haze per layer.
+
+## Research follow-up (to apply)
+- Pointer: motion-event on the bg widget never fires if DING/desktop-icons or another wallpaper/blur extension sits
+  above it. Robust way (mouse-tail, tokidachi): `global.backend.get_cursor_tracker()` `position-invalidated` → dirty
+  flag, sample `global.get_pointer()` on the tick; "bare desktop" = no visible non-minimized window on the active
+  workspace whose frame rect contains the point (DESKTOP-type windows count as desktop). Pointer events then unneeded.
+- Overview thumbnails also show background-group content; fish may freeze there.
+
+## Fish = brain / motor / body (user: change thinking, motion and actions independently later)
+- `brain.js` — the thinking. Each fish runs a small state machine: a table of named states
+  (e.g. idle wander, curious, flee, bored, plus room for nibble-plants, rest-by-decor, follow-buddy, sleep),
+  each with `enter`/`update` returning an intent `{target|away, speed, look}` and the next state.
+  Per-species personality is plain data (curiosity, skittishness, boredom, home zone, sociability).
+  Adding a behavior = add one state + hook it into a transition; nothing else changes.
+- `steer.js` — the motion. Turns an intent into movement (wander, bounds, separation, schooling, turn limits,
+  bend). Knows nothing about moods.
+- `fish.js` — the body. Draws/animates sprites from motion state (frame, yaw, tail speed, pupil look, puff).
+- `check.js` covers brain transitions and steer bounds headless.
