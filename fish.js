@@ -288,12 +288,14 @@ export class School {
         this._layers = [[], []];
         let k = 0;
         for (const sp of SPECIES) {
+            const hx = swimBounds.x + Math.random() * swimBounds.w, hy = swimBounds.y + Math.random() * swimBounds.h;
             for (let i = 0; i < sp.n; i++) {
                 const layer = sp.school || k++ % 3 ? 1 : 0, sc = layer ? 1 : 0.6;
                 const L = sp.len * sc, size = Math.ceil(L * 2);
                 const s = makeFish({
-                    x: swimBounds.x + Math.random() * swimBounds.w,
-                    y: swimBounds.y + (sp.bottom ? swimBounds.h - L : Math.random() * swimBounds.h),
+                    // schools start bunched together, everyone else anywhere
+                    x: sp.school ? hx + Math.random() * 80 : swimBounds.x + Math.random() * swimBounds.w,
+                    y: sp.school ? hy + Math.random() * 40 : swimBounds.y + (sp.bottom ? swimBounds.h - L : Math.random() * swimBounds.h),
                     cruise: sp.cruise * (0.85 + Math.random() * 0.3) * (layer ? 1 : 0.7),
                     pad: L * 0.5, curious: sp.curious, school: sp.school, bottom: sp.bottom, turn: sp.turn,
                 });
@@ -303,6 +305,7 @@ export class School {
                     look: [1, 0], g: { a: sp.len * sp.ar, h: sp.len * sp.hr, shade: null },
                 };
                 area.connect('repaint', () => this._paint(f));
+                area.connect('destroy', () => { f.area = null; });  // parent torn down under us
                 fishLayers[layer].add_child(area);
                 this._fish.push(f);
                 this._layers[layer].push(s);
@@ -312,11 +315,12 @@ export class School {
 
     tick(dt, t, pointer) {
         for (const f of this._fish) {
+            if (!f.area) continue;
             const s = f.s;
             step(s, dt, pointer, this._b, this._layers[f.layer]);
             const c = Math.cos(s.dir), facing = c > 0.2 ? 1 : c < -0.2 ? -1 : Math.sign(f.flip) || 1;
             f.flip += Math.max(-dt * 5, Math.min(dt * 5, facing - f.flip));
-            f.pitch = Math.max(-0.5, Math.min(0.5, Math.atan2(Math.sin(s.dir), Math.abs(c))));
+            f.pitch = Math.max(-0.4, Math.min(0.4, Math.atan2(Math.sin(s.dir), Math.abs(c))));
             f.ph += dt * (4 + (s.speed / f.sp.len) * 7);
             f.puff += ((s.panic > 0.2 ? 1 : 0) - f.puff) * Math.min(1, dt * 4);
             // eyes follow the cursor while curious, otherwise look ahead
@@ -358,7 +362,7 @@ export class School {
     }
 
     destroy() {
-        for (const f of this._fish) f.area.destroy();
+        for (const f of this._fish) f.area?.destroy();
         this._fish = [];
         this._layers = [[], []];
     }

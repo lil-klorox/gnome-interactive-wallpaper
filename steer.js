@@ -39,7 +39,7 @@ export function step(f, dt, p, b, all, rand = Math.random) {
         if (o === f) continue;
         const dx = f.x - o.x, dy = f.y - o.y, d = Math.hypot(dx, dy) || 1, r = f.pad + o.pad + 12;
         if (d < r) { ax += dx / d * (1 - d / r) * f.cruise * 3; ay += dy / d * (1 - d / r) * f.cruise * 3; }
-        if (f.school && o.school === f.school && d < 170) {
+        if (f.school && o.school === f.school && d < 250) {
             n++; cx += o.x; cy += o.y;
             avx += Math.cos(o.dir) * o.speed; avy += Math.sin(o.dir) * o.speed;
         }
