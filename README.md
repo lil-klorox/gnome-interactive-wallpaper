@@ -1,48 +1,43 @@
 # Interactive Wallpaper
 
-<!-- DRAFT: final plain-language rewrite + screenshot/GIF comes last. -->
+![A fishtank wallpaper with a castle, a sunken ship, a diver and fish swimming](docs/screenshot.png)
 
-Living wallpapers for GNOME Shell that notice your desktop: fish scatter from dragged windows,
-doze when you're idle, dim at night and glance at notifications. No video, no browser, one
-extension. The first scene is a fishtank.
+This turns your GNOME desktop background into a little living world that notices what you're doing. The first world is a fishtank. Fish wander around and loosely hang out together. When you move your mouse over the empty desktop, some of them swim over to see what you are and some dart away. Drag a window across the tank and the fish scatter out from under it. Walk away for a while and they settle down and doze, then come say hi when you're back. At night the tank goes dim and blue, a notification sends up a little burst of bubbles, and if you click the empty desktop you drop in some food. Fish you feed get braver over the following days and slowly grow.
 
-Everything is drawn inside GNOME Shell itself, so there is no extra program running. It pauses
-when every screen is covered by a maximized or fullscreen window, when the screen is locked, and
-in the overview, and it slows to 10 frames a second once you've been idle for a minute.
+It's meant to be calm and to cost almost nothing to run. There's no video playing and no hidden web browser. Everything is drawn by GNOME itself, so there's no separate program in the background. All the art was modeled and rendered ahead of time in Blender, so your computer only has to slide pictures around, and the whole tank fits in about 40 MB of memory. It stops completely whenever you can't see it (a window covers the screen, you open the overview, the screen locks or goes dark) and slows down once you've been idle for a minute.
 
-## Compatibility
+## What you need
 
-GNOME Shell 45 or newer, on any distro that ships it (Debian 13 and later, for example).
+GNOME 45 or newer, on any Linux that ships it. That includes Debian 13 and later, recent Ubuntu, and Fedora. It's built and tested on Wayland; X11 should work but hasn't been tested much.
 
-## Install from source
+## Install it
+
+Grab the code and install it:
 
     git clone https://github.com/lil-klorox/gnome-interactive-wallpaper
     cd gnome-interactive-wallpaper
     make install
 
-On Wayland the shell only finds new extensions at login, so log out and back in, then run
-`gnome-extensions enable interactive-wallpaper@lil-klorox`. Pick the scene in the extension's
-settings (`gnome-extensions prefs interactive-wallpaper@lil-klorox`).
+GNOME only notices new extensions when you log in, so log out and back in, then switch it on:
 
-## Uninstall
+    gnome-extensions enable interactive-wallpaper@lil-klorox
 
-    gnome-extensions uninstall interactive-wallpaper@lil-klorox
+If you ever want to pick a different scene, open its settings with `gnome-extensions prefs interactive-wallpaper@lil-klorox`.
 
-## Try it without touching your session
+To remove it, run `gnome-extensions uninstall interactive-wallpaper@lil-klorox`.
 
-`./dev.sh` opens a nested GNOME Shell in a window with the extension enabled and a throwaway
-settings folder. `./dev.sh --headless 40` runs it off-screen and saves screenshots plus a
-`stats.txt` with memory and tick time. `make check` runs the logic self-checks (no shell needed).
+## Try it without touching your desktop
 
-## Logs
+`./dev.sh` opens a separate test copy of GNOME in a window, with the wallpaper already running, so you can play with it without changing anything on your real desktop. `./dev.sh --headless 40` runs that test copy invisibly for 40 seconds and saves a few screenshots plus a small file with the memory and speed numbers. `make check` runs the quick logic tests, which don't need GNOME at all.
 
-    journalctl -f /usr/bin/gnome-shell
+If something looks wrong, the wallpaper writes short notes to GNOME's log, which you can watch with `journalctl -f /usr/bin/gnome-shell`.
 
-## Make your own scene
+## Make your own world
 
-A scene is one folder with one function. See [docs/writing-a-scene.md](docs/writing-a-scene.md),
-and [DESIGN.md](DESIGN.md) for how the pieces fit.
+The fishtank is just the first scene. A scene is one folder with one function in it: the platform hands it a spot on the background, the pictures it asked for, and a simple running summary of what's happening on your desktop (where the mouse is, which windows are moving, how long you've been away, what time it is). The scene decides how to react. The platform takes care of everything else, like shrinking oversized art to fit your screen, sharing pictures between monitors, keeping memory in check and pausing when nobody's looking.
+
+[docs/writing-a-scene.md](docs/writing-a-scene.md) walks through a tiny example scene from start to finish, and [DESIGN.md](DESIGN.md) explains how all the pieces fit together. If you make something you like, open a pull request.
 
 ## License
 
-GPL-2.0-or-later, see [LICENSE](LICENSE).
+GPL-2.0-or-later. See [LICENSE](LICENSE).
