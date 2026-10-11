@@ -111,3 +111,13 @@ not plastic CG. So:
   bend). Knows nothing about moods.
 - `fish.js` — the body. Draws/animates sprites from motion state (frame, yaw, tail speed, pupil look, puff).
 - `check.js` covers brain transitions and steer bounds headless.
+
+## Prior art for phase 2 (patterns only; most are GPL, copy no code)
+- Sprite loading in shell: GdkPixbuf `new_from_file` → `new_subpixbuf` per frame → `St.ImageContent` +
+  `set_data`; swap `actor.content` per frame; trilinear scaling filters (gnome-critter).
+- Caustics shader if wanted: `Shell.GLSLEffect`, falling back to `Clutter.ShaderEffect`/Cogl snippet when it's
+  missing (Burn-My-Windows Shader.js) — keeps it version-agnostic.
+- Fish swim math (FishSim): tail angle = sin(phase)*maxTail*effort + steer*maxSteer, chest counter-rotates.
+  In bpy: subdivided body + shape keys / Wave-style sine deform driven per frame.
+- Turn sheets: rotate object (not camera) on yaw, ortho cam, render yaw 0..180 and mirror the rest; JSON manifest.
+- Seaweed: bezier curve + bevel + sine deform; rocks: voronoi-displaced meshes.
