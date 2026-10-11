@@ -1,0 +1,7 @@
+{
+  "uuid": "fishtank@lil-klorox",
+  "name": "Fishtank",
+  "description": "Interactive aquarium live wallpaper. Fish react to your cursor.",
+  "shell-version": ["45", "46", "47", "48", "49"],
+  "url": "https://github.com/lil-klorox/fishtank"
+}

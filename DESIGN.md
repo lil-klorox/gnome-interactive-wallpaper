@@ -61,3 +61,22 @@ Cursor: each fish has a personality — skittish fish flee (fast burst, panic de
 approach to ~80px, hover, lose interest after a few seconds; some switch depending on how fast the
 cursor moves (a fast cursor scares everyone). Fish on the far layer are smaller/dimmer.
 `steer.js` is pure math (no gi imports) so `gjs -m check.js` can assert flee/curious/bounds behavior.
+
+## Art direction (user)
+A little dorky/stylized is fine, not lifelike, but every piece gets a LOT of detail and thought (bricks, portholes, coins, whiskers, eye highlights, varied leaves, shells in the sand). Detail goes in once-rasterized art so perf rules still hold.
+
+## Phase 2: Blender art (user: every asset detailed, upfront time/cost no object)
+Art is modeled + rendered by headless Blender scripts in `blender/` (`~/opt/blender/blender -b --factory-startup -P blender/<x>.py`),
+output PNGs + JSON manifests committed under `assets/`. Runtime never needs Blender; scripts are the source of truth,
+so a tweak = edit script + re-render. Headless bpy scripts, not blender-mcp: reproducible, versioned, no GUI.
+- `blender/common.py` (shared, owned by scenery agent; fish agent imports read-only): Eevee, orthographic side camera,
+  transparent film, "Standard" view transform, warm key light from the surface + cool fill + rim, stylized
+  slightly-chunky "dorky aquarium toy" look, shared palette/material helpers, `render(obj, path, px)` helper.
+- Scenery: backdrop (deep water, far rock silhouettes in 2-3 parallax depth plates with haze), sand bed with
+  pebbles/shells, castle, sunken ship, treasure chest (lid as separate sprite to bob), diver (helmet, hose, boots),
+  bubbler/air stone, rocks, plants rendered in segments or as single sprites pivoting at base, snail sprite frames,
+  caustic/light-ray overlay textures. scene.js loads them as actors (St.ImageContent / GdkPixbuf), keeps all perf rules.
+- Fish: each species modeled + shape-keyed (tail swing, fin flutter, mouth open, puffer puff) and rendered as sprite
+  sheets: swim-cycle frames x yaw angles (profile → 3/4 → front; mirror for the other side) so fish TURN in
+  3D instead of flipping. Manifest gives frame size, counts, and per-frame eye position so fish.js overlays a
+  pupil that looks at the cursor. Memory budget: all sheets together < ~80 MB decoded.
