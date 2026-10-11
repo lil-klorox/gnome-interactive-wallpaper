@@ -13,7 +13,7 @@ export function parseManifest(text) {
     for (const [name, e] of Object.entries(m.images)) {
         const n = e?.n ?? 1, cols = e?.cols ?? n;
         const px = e?.px ?? [Math.ceil(e?.w * cols), Math.ceil(e?.h * Math.ceil(n / cols))];
-        if (/^[\w-]+$/.test(name) && pos(e.w) && pos(e.h) && int(n) && int(cols) && cols <= n &&
+        if (/^[\w-]+$/.test(name) && pos(e?.w) && pos(e?.h) && int(n) && int(cols) && cols <= n &&
             Array.isArray(px) && int(px[0]) && int(px[1]))
             images[name] = Object.freeze({...e, n, cols, px});
         else

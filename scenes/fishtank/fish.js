@@ -62,7 +62,8 @@ export class School {
         this._fish = [];
         this._mates = [[], []];   // [{f, b}] per layer, for brains
         this._motion = [[], []];  // motion states per layer, for steering
-        this._store = { ...ctx.store.get()?.fish };
+        this._store = {};  // known fish ids only; anything else in the file is dropped
+        const old = ctx.store.get().fish;
         const S = Math.min(1, Math.max(0.5, b.h / 1000));  // smaller fish on small screens
         const failed = [];
         let k = 0;
@@ -77,7 +78,7 @@ export class School {
             const pers = PERSONALITY[sp.name];
             const hx = b.x + Math.random() * b.w, hy = b.y + b.h * (pers.band[0] + Math.random() * (pers.band[1] - pers.band[0]));
             for (let i = 0; i < sp.n; i++) {
-                const id = sp.name + i, rec = this._store[id] = record(this._store[id], now);
+                const id = sp.name + i, rec = this._store[id] = record(old?.[id], now);
                 const layer = sp.school || k++ % 3 ? 1 : 0;
                 const sc = S * (layer ? 1 : FAR.scale) * (0.8 + 0.2 * Math.min(1, (now - rec.born) / DAY / 30));  // grows for a month
                 const s = makeFish({
@@ -125,9 +126,10 @@ export class School {
     // Sheets (main + puffer's puff) and the largest eye radius, so one eye texture fits every frame.
     _species(name) {
         const ctx = this._ctx, e = ctx.images[name];
-        if (!e?.eyes || !e.yaws) throw new Error('not in manifest');
+        if (!e?.eyes || !e.yaws || typeof e.iris !== 'string') throw new Error('not in manifest');
         const sheets = [ctx.sheet(name)];
         if (e.puff && ctx.images[e.puff]?.eyes) sheets.push(ctx.sheet(e.puff));
+        if (sheets.some(sh => sh.eyes.length !== sh.n)) throw new Error('eyes/frames mismatch');
         let rmax = 1;
         for (const sh of sheets) for (const fr of sh.eyes) for (const v of fr) rmax = Math.max(rmax, v[2]);
         return { sheets, rows: e.yaws.length, rmax, iris: e.iris, len: e.len };
@@ -229,8 +231,9 @@ export class School {
     }
 
     _save() {
-        for (const f of this._fish) this._store[f.id].fed = f.brain.fed;
-        // ponytail: one file shared by every monitor's school; last writer wins on multi-monitor
+        // Every monitor's school shares one store copy and the same fish ids: keep the larger fed count.
+        const prev = this._ctx.store.get().fish;
+        for (const f of this._fish) this._store[f.id].fed = Math.max(f.brain.fed, record(prev?.[f.id], Infinity).fed);
         this._ctx.store.set({ fish: this._store });
     }
 
@@ -294,7 +297,9 @@ export class School {
     }
 
     destroy() {  // actors go with ctx.root, which the host destroys
-        this._save();
+        // bug fix: saving unconditionally let an unfed monitor's stale copy overwrite another
+        // monitor's feeding on disable; only a school with unsaved changes writes
+        if (this._fish.reduce((n, f) => n + f.brain.fed, 0) !== this._fedSum) this._save();
         this._fish = [];
     }
 }

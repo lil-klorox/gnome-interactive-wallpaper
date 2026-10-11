@@ -21,11 +21,12 @@ export function loadManifest(dir) {
 function upload(content, pb) {
     const args = [pb.read_pixel_bytes(), pb.has_alpha ? Cogl.PixelFormat.RGBA_8888 : Cogl.PixelFormat.RGB_888,
         pb.width, pb.height, pb.rowstride];
-    const cogl = global.stage.context?.get_backend?.().get_cogl_context?.();
+    // GNOME 48+ takes the Cogl context first. Try the old form first: too few args throws before
+    // doing anything, while too many (old shell, new form) logs a GJS warning on every image.
     try {
-        content.set_bytes(cogl, ...args);  // GNOME 48+ takes the Cogl context first
-    } catch {
         content.set_bytes(...args);
+    } catch {
+        content.set_bytes(global.stage.context.get_backend().get_cogl_context(), ...args);
     }
 }
 
@@ -61,16 +62,21 @@ function load(sc, cancel, name) {
 function store(id) {
     const dir = GLib.build_filenamev([GLib.get_user_data_dir(), 'interactive-wallpaper']);
     const file = Gio.File.new_for_path(GLib.build_filenamev([dir, `${id}.json`]));
+    let data = null;  // one in-memory copy shared by every monitor; disk is read once
     return {
         get() {
+            if (data)
+                return data;
             try {
                 const v = JSON.parse(new TextDecoder().decode(file.load_contents(null)[1]));
-                return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+                data = v && typeof v === 'object' && !Array.isArray(v) ? v : {};
             } catch {
-                return {};
+                data = {};
             }
+            return data;
         },
         set(obj) {
+            data = obj;
             const bytes = new TextEncoder().encode(JSON.stringify(obj));
             if (bytes.length > STORE_MAX) {
                 warn(`${id} store over 64 KB, not saved`);
@@ -122,5 +128,5 @@ export function makeCtx(sc, cache, cancel, root, w, h, world) {
             },
         };
     };
-    return Object.freeze({root, w, h, ref: sc.man.ref, images: sc.man.images, world, image, sheet, store: store(sc.id)});
+    return Object.freeze({root, w, h, ref: sc.man.ref, images: sc.man.images, world, image, sheet, store: (sc.store ??= store(sc.id))});
 }

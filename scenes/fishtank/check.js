@@ -95,6 +95,10 @@ run(o, null, [o], { food: [flake] });
 ok(o.b.state === 'feed', 'flake noticed');
 for (let i = 0; i < 300 && flake.live; i++) run(o, null, [o], { food: [flake] });
 ok(!flake.live && o.b.fed === 1, 'flake eaten');
+o = fish(800, 700, {});
+const sunk = { x: 805, y: B.h, live: true };  // lying on the floor, below where a fish's centre can go
+for (let i = 0; i < 300 && sunk.live; i++) run(o, null, [o], { food: [sunk] });
+ok(!sunk.live, 'flake on the floor eaten');
 
 // tameness: 100 flakes eaten halves the chance a slow cursor spooks a fish
 const fleeRate = fed => {

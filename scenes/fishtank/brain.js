@@ -159,8 +159,12 @@ export const STATES = {
         update: (b, c) => {
             const k = b.food;
             if (!k?.live || b.timer <= 0) return 'idle';
-            if (dist(c.f, k) < 14 + c.f.pad * 0.3) { k.live = false; b.fed++; b.food = null; return 'idle'; }
-            return { tx: k.x, ty: k.y, speed: 1.6, look: k, chomp: dist(c.f, k) < 40, shoal: 0 };
+            // bug fix: a flake on the sand or by the glass sat outside where steer lets the fish's
+            // centre go, so it was never in reach; aim at (and measure to) the nearest reachable spot
+            const { f, b: w } = c, x = Math.max(w.x + f.pad, Math.min(w.x + w.w - f.pad, k.x));
+            const at = { x, y: Math.max(w.y + f.pad, Math.min(sandY(c), k.y)) }, d = dist(f, at);
+            if (d < 14 + f.pad * 0.3) { k.live = false; b.fed++; b.food = null; return 'idle'; }
+            return { tx: at.x, ty: at.y, speed: 1.6, look: k, chomp: d < 40, shoal: 0 };
         },
     },
     gulp: {  // corydoras dart up for a gulp of air, then sink back home

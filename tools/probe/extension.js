@@ -10,6 +10,12 @@ const env = GLib.getenv;
 
 export default class Probe {
     enable() {
+        // Disabling the target makes the shell disable+re-enable extensions loaded after it, the probe
+        // included; a second run would cycle the target again and skew the rates. Dev-only, so the
+        // timer is deliberately left running across that.
+        if (this._started)
+            return;
+        this._started = true;
         const out = env('OUT'), uuid = env('TARGET_UUID'), secs = Number(env('SECS') || 40);
         const lines = [], em = Main.extensionManager, start = GLib.get_monotonic_time() / 1e6;
         const rss = () => Number(/VmRSS:\s+(\d+)/.exec(new TextDecoder().decode(GLib.file_get_contents('/proc/self/status')[1]))[1]) / 1024;

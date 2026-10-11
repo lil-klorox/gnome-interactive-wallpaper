@@ -57,6 +57,9 @@ export default class InteractiveWallpaper extends Extension {
         this._on(global.workspace_manager, 'active-workspace-changed', update);
         this._on(Main.overview, 'showing', update);
         this._on(Main.overview, 'hidden', update);
+        // Past the user's blank delay nobody can see the tank: pause, and wake on the first input.
+        this._session = new Gio.Settings({schema_id: 'org.gnome.desktop.session'});
+        this._activeWatch = 0;
         // Count notifications only; the objects themselves are never kept.
         const hook = src => src.connectObject('notification-added', () => this._raw.notes++, this);
         Main.messageTray.getSources().forEach(hook);
@@ -71,8 +74,10 @@ export default class InteractiveWallpaper extends Extension {
             obj.disconnect(id);
         Main.messageTray.getSources().forEach(s => s.disconnectObject(this));
         this._stop();
+        if (this._activeWatch)
+            global.backend.get_core_idle_monitor().remove_watch(this._activeWatch);
         this._clear();
-        this._sigs = this._tanks = this._cache = this._cancel = this._scene = this._grab = null;
+        this._sigs = this._tanks = this._cache = this._cancel = this._scene = this._grab = this._session = null;
         this._settings = this._iface = this._raw = this.stats = null;
     }
 
@@ -111,7 +116,7 @@ export default class InteractiveWallpaper extends Extension {
         if (!sc)
             return;
         const mons = Main.layoutManager.monitors;
-        const k = scaleFor(Math.max(...mons.map(m => m.height)), sc.man.ref, bytesOf(sc.man.images, 1));
+        const k = scaleFor(Math.max(...mons.map(m => m.height * (m.geometry_scale ?? 1))), sc.man.ref, bytesOf(sc.man.images, 1));
         if (k !== sc.k) {  // textures are decoded at k, so a new k needs fresh ones
             sc.k = this.stats.k = k;
             this.stats.bytes = bytesOf(sc.man.images, k);
@@ -172,7 +177,8 @@ export default class InteractiveWallpaper extends Extension {
 
     // On window/overview changes: refresh window rects and which monitors are covered.
     _update() {
-        const covered = new Set(), rects = [], ov = Main.overview.visible;
+        const covered = new Set(), rects = [];
+        const ov = Main.overview.visible || this._blanked();
         for (const w of global.workspace_manager.get_active_workspace().list_windows()) {
             if (!w.showing_on_its_workspace() || w.get_window_type() === Meta.WindowType.DESKTOP)
                 continue;
@@ -204,6 +210,17 @@ export default class InteractiveWallpaper extends Extension {
         this._timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT_IDLE, ms, () => this._tick());
     }
 
+    _blanked() {
+        const delay = this._session.get_uint('idle-delay'), idle = global.backend.get_core_idle_monitor();
+        if (!delay || idle.get_idletime() < delay * 1000)
+            return false;
+        this._activeWatch ||= idle.add_user_active_watch(() => {
+            this._activeWatch = 0;
+            this._update();
+        });
+        return true;
+    }
+
     _stop() {
         if (this._timer)
             GLib.source_remove(this._timer);
@@ -230,7 +247,12 @@ export default class InteractiveWallpaper extends Extension {
     _tick() {
         const t0 = now(), dt = Math.min(t0 - this._last, 0.1), raw = this._raw, limit = 2 * this._ms;
         this._last = t0;
-        this._fill();
+        try {
+            this._fill();
+        } catch (e) {  // e.g. the dragged window died mid-grab; drop it and keep ticking
+            this._grab = this._raw.grabbing = null;
+            logError(e, 'interactive-wallpaper: world fill');
+        }
         let live = false;
         for (const t of this._tanks) {
             if (!t || t.dead || t.paused)
@@ -239,9 +261,9 @@ export default class InteractiveWallpaper extends Extension {
             raw.my = t.mon.y;
             raw.mw = t.mon.width;
             raw.mh = t.mon.height;
-            update(t.world, raw, dt);
             const s = now();
             try {
+                update(t.world, raw, dt);
                 t.scene.tick(dt, t0 - this._t0);
                 t.slow = (now() - s) * 1000 > limit ? t.slow + 1 : Math.max(0, t.slow - 1);
                 if (t.slow > SLOW_TICKS)
@@ -255,7 +277,7 @@ export default class InteractiveWallpaper extends Extension {
         const st = this.stats;
         st.tickMs = 0.95 * st.tickMs + 0.05 * (now() - t0) * 1000;
         st.ticks++;
-        if (!live) {
+        if (!live || this._blanked()) {  // blanked: _update() re-arms on the first input
             this._timer = 0;
             return GLib.SOURCE_REMOVE;
         }
