@@ -1,12 +1,23 @@
 # Interactive Wallpaper
 
-Your desktop wallpaper just sits there. This GNOME extension swaps it for a living scene that
-notices what you do: fish that swim over to look at your mouse, scatter when you drag a window
-across them, doze when you walk away and come say hi when you're back. It runs inside GNOME Shell
-itself, so there's no video playing, no hidden web browser and no extra program in the background,
-and it stops completely whenever nobody can see it.
+A small engine for living wallpapers on GNOME. Instead of a picture that just sits there, your
+desktop shows a scene that notices what you do: where your mouse is, which windows you drag around,
+when you step away and when you come back. It runs inside GNOME Shell itself, so there's no video
+playing, no hidden web browser and no extra program in the background, and it stops completely
+whenever nobody can see it.
 
-![A fishtank wallpaper with a castle, a sunken ship, a diver and fish swimming](docs/screenshot.png)
+The engine handles the hard parts (memory, speed, multiple monitors, settings, the lock screen) once,
+so a scene is just one folder of art and a short script. It comes with two scenes, and you can write
+your own.
+
+**Fishtank**: fish, jellyfish, eels and more that swim over to look at your mouse, scatter from
+dragged windows and race for food when you click.
+
+![The fishtank scene: a castle, a sunken ship, a diver, jellyfish and fish swimming](docs/fishtank.jpg)
+
+**Sand garden**: a zen garden seen from above that you rake with your mouse.
+
+![The sand garden scene: raked sand, mossy stones with rings around them, a stone lantern and a maple branch](docs/garden.jpg)
 
 ## Install it
 
@@ -45,30 +56,32 @@ If something looks wrong, the extension writes short notes to GNOME's log, which
 
 ## The scenes
 
-**Fishtank** is the showcase. Fish wander around and loosely hang out together, and each kind moves
-its own way. Move your mouse over the empty desktop and some swim over to see what you are while
-others dart away. Click the empty desktop and food drops in: flakes tumble and sink, fish race for
-them, and the bottom feeders tidy up what lands on the sand. Drag a window across the tank and the
-fish scatter out from under it. The lights follow a schedule you can set, a notification sends up a
-burst of bubbles, and fish you feed get braver over the following days and slowly grow. Double-click the glass and the fish startle, hold the button down to pour food, and at
-night your cursor becomes a flashlight the small fish drift toward. The fish you feed most turns tame
-and comes to say hi, and once a day something small and rare might happen, like baby fish hatching.
-Jellyfish, eels, seahorses, shrimp and a hermit crab live in there too. All of its
-art was modeled and rendered ahead of time in Blender, so your computer only has to slide pictures
-around.
+**Fishtank.** Fish wander around and loosely hang out together, and each kind moves its own way.
+Move your mouse over the empty desktop and some swim over to see what you are while others dart
+away. Click the empty desktop and food drops in: flakes tumble and sink, fish race for them, and the
+bottom feeders tidy up what lands on the sand. Drag a window across the tank and the fish scatter
+out from under it. The lights follow a schedule you can set, a notification sends up a burst of
+bubbles, and fish you feed get braver over the following days and slowly grow.
 
-**Sand garden** is a calm zen garden seen from above. Drag with the mouse button held and you rake
+Double-click the glass and the fish startle, hold the button down to pour food, and at night your
+cursor becomes a flashlight the small fish drift toward. The fish you feed most turns tame and comes
+to say hi, and once a day something small and rare might happen, like baby fish hatching. Jellyfish,
+eels, seahorses, shrimp and a hermit crab live in there too. All of its art was modeled and rendered
+ahead of time in Blender, so your computer only has to slide pictures around.
+
+**Sand garden.** A calm zen garden seen from above. Drag with the mouse button held and you rake
 grooves into the sand, which slowly smooth back out over the hours. Raked rings sit around the
 stones, windows press their own rings into the sand and leave furrows when you drag them, and a
 notification drops a leaf from the branch in the corner. Pick the season, the stones and the border
 in settings, and the stone lantern lights up at night.
 
-**Dot** is a tiny demo: one dot that follows your mouse. It's there to show how a scene is built.
+**Dot** is a tiny demo for people writing scenes: one dot that follows your mouse. It's there to
+show how a scene is built.
 
-## How it stays light
+## What the engine does
 
-The extension is really a small engine, and each wallpaper is a "scene" that plugs into it.
-Everything hard is done once by the engine, so no scene has to get it right on its own:
+Each wallpaper is a "scene" that plugs into the engine. Everything hard is done once by the engine,
+so no scene has to get it right on its own:
 
 - it shrinks art to fit your screen, and keeps shrinking until the whole scene fits a memory budget
   of 100 MB
@@ -90,13 +103,6 @@ For now it only runs scenes that ship in this repo. There's no folder where you 
 else's scene, because a scene runs inside GNOME Shell with the same access the shell has, and that's
 not something to hand to code you haven't read.
 
-## Try it without touching your desktop
-
-`./dev.sh` opens a separate test copy of GNOME in a window, with the wallpaper already running, so
-you can play with it without changing anything on your real desktop. `./dev.sh --headless 40` runs
-that test copy invisibly for 40 seconds and saves a few screenshots plus a small file with the
-memory and speed numbers. `make check` runs the quick logic tests, which don't need GNOME at all.
-
 ## Make your own scene
 
 A scene is one folder with one function in it. The engine calls it once to build your things, then
@@ -106,6 +112,13 @@ scene's settings are a short list the engine turns into rows in the settings win
 and covers art, settings, the lights schedule, posters and the few rules the engine enforces.
 [DESIGN.md](DESIGN.md) explains how all the pieces fit together. If you make something you like,
 open a pull request and it can ship with the next version.
+
+## Try it without touching your desktop
+
+`./dev.sh` opens a separate test copy of GNOME in a window, with the wallpaper already running, so
+you can play with it without changing anything on your real desktop. `./dev.sh --headless 40` runs
+that test copy invisibly for 40 seconds and saves a few screenshots plus a small file with the
+memory and speed numbers. `make check` runs the quick logic tests, which don't need GNOME at all.
 
 ## License
 
