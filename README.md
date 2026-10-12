@@ -24,6 +24,13 @@ dragged windows and race for food when you click.
 You need GNOME 45 or newer (Debian 13 and later, recent Ubuntu and Fedora all ship it). It's built
 and tested on Wayland; X11 should work but hasn't been tested much.
 
+The quickest way is to download `interactive-wallpaper@lil-klorox.shell-extension.zip` from the
+[latest release](https://github.com/lil-klorox/gnome-interactive-wallpaper/releases/latest) and run:
+
+    gnome-extensions install --force interactive-wallpaper@lil-klorox.shell-extension.zip
+
+Or build it from the source, which also adds an "Interactive Wallpaper" entry to the app search:
+
     git clone https://github.com/lil-klorox/gnome-interactive-wallpaper
     cd gnome-interactive-wallpaper
     make install
@@ -46,10 +53,10 @@ background. Turning the live wallpaper off, or turning the extension off, puts y
 back. One catch: if GNOME switches the extension off by itself, for example after a crash, your old
 wallpaper isn't put back. Pick it again in Settings → Appearance.
 
-To remove it, run `make uninstall`: it puts your own wallpaper back and also removes the search
-entry. If you remove it from the Extensions app instead, the "Interactive Wallpaper" search entry
-stays behind (it just does nothing now); delete `~/.local/share/applications/interactive-wallpaper.desktop`
-to get rid of it.
+If you installed the zip, remove it from the Extensions app; your own wallpaper comes back. If you
+built it from source, run `make uninstall` instead: it puts your own wallpaper back and also removes
+the search entry. (Removing a source install from the Extensions app leaves the search entry behind;
+delete `~/.local/share/applications/interactive-wallpaper.desktop` to get rid of it.)
 
 If something looks wrong, the extension writes short notes to GNOME's log, which you can watch with
 `journalctl -f /usr/bin/gnome-shell`.
