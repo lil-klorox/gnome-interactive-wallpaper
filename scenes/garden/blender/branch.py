@@ -144,14 +144,14 @@ def flower(p, rng, root, objs):
 
 def samaras(p, rng, root, objs):
     """A hanging pair of maple seed wings (helicopters)."""
-    wm = bpy.data.materials.get('wing') or pbr('wing', (0.35, 0.36, 0.12), (0.55, 0.48, 0.2), rough=0.6, scale=30, grime=0.2)
+    wm = bpy.data.materials.get('wing') or pbr('wing', (0.62, 0.52, 0.22), (0.8, 0.66, 0.3), rough=0.6, scale=30, grime=0.15)
     pr = bpy.data.objects.new('samara', None)
     pr.parent = root
     bpy.context.scene.collection.objects.link(pr)
     pr.location = Vector(p + np.array([0, -0.12, 0.05]))
     pr.rotation_euler = (0.3, rng.uniform(-0.4, 0.4), rng.uniform(-0.3, 0.3))
     for sgn in (-1, 1):
-        o = leaf_mesh('petal', int(rng.integers(1000)), 0.13)
+        o = leaf_mesh('petal', int(rng.integers(1000)), 0.18)  # 0.13 vanished at screen size
         o.data.materials.append(wm)
         o.parent = pr
         o.scale = (0.45, 1.0, 1.0)

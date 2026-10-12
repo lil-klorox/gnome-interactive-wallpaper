@@ -66,7 +66,7 @@ def stones(k):
     rig()
     seed(k)
     objs = stone_prop(k)
-    ground(14, soft=2.5, power=1000)
+    ground(14, soft=1.4 if k == 2 else 2.5, power=750 if k == 2 else 1000)  # the tall stone threw a wide dark halo
     fp = footprint(objs)
     place(objs, margin=0.25)
     ent = sprite(f'stone-{k}', {'base': ((fp[0] + fp[1]) / 2, (fp[2] + fp[3]) / 2, 0)})
