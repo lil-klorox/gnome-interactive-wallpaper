@@ -35,7 +35,7 @@ What `ctx` gives you:
 | `image(name, fallback)`, `sheet(name, fallback)` | art from `assets/` (see Art and Fallback art) |
 | `ref`, `images` | the screen height your art was drawn for, and the manifest entries |
 | `settings`, `onSettings(fn)` | your scene's settings and a way to hear when they change (see Settings) |
-| `store.get()`, `store.set(obj)` | a small JSON save file for this scene (up to 64 KB) |
+| `store.get()`, `store.set(obj)` | a small JSON save file for this scene (up to 64 KB). It stays in memory while GNOME runs, so what you save in `destroy()` is there for the next `create`, even right after a lock and unlock |
 
 `ctx.world` and `ctx.settings` are the same objects every tick and the engine updates them in place,
 so keep a reference and read them; never connect your own shell signals.
