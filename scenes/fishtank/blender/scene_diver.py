@@ -34,10 +34,25 @@ def aged_brass(name, verdigris=0.6):
     vn = N(m, 'TexNoise', Vector=(co, 'Object'), Scale=14.0, Detail=6.0)
     v = N(m, 'MapRange', Value=M(m, 'SUBTRACT', M(m, 'MULTIPLY', (ao, 'AO'), 1.25), M(m, 'MULTIPLY', (vn, 'Fac'), verdigris)),
           **{'From Min': 0.35, 'From Max': 0.75, 'To Min': 1.0, 'To Max': 0.0})
-    col = N(m, 'Mix', _data_type='RGBA', Factor=(v, 'Result'), A=(base, 'Color'), B=(0.08, 0.25, 0.17, 1))
-    met = N(m, 'MapRange', Value=(v, 'Result'), **{'To Min': 1.0, 'To Max': 0.0})
-    rough = N(m, 'MapRange', Value=M(m, 'ADD', (v, 'Result'), M(m, 'MULTIPLY', (nz, 'Fac'), 0.4)), **{'To Min': 0.22, 'To Max': 0.9})
-    b = N(m, 'Bump', Strength=0.25, Distance=0.01, Height=M(m, 'ADD', (vn, 'Fac'), (v, 'Result')))
+    # open verdigris blooms on the plain surfaces too, not only in crevices
+    pn = N(m, 'TexNoise', Vector=(co, 'Object'), Scale=2.2, Detail=5.0)
+    bloom = N(m, 'MapRange', Value=M(m, 'ADD', (pn, 'Fac'), M(m, 'MULTIPLY', (vn, 'Fac'), 0.15)),
+              **{'From Min': 0.6, 'From Max': 0.68, 'To Max': 0.4 + 0.5 * verdigris})
+    v = (M(m, 'MAXIMUM', (v, 'Result'), (bloom, 'Result')), 0)
+    # scratches: thin long cells (stretched voronoi edges), only some, rubbed back to bright metal
+    def scratch(rot, sc):
+        mp = N(m, 'Mapping', Vector=(co, 'Object'), Rotation=(0, rot, rot * 0.7), Scale=(1.0, 1.0, 22.0))
+        e = N(m, 'TexVoronoi', Vector=mp, Scale=sc, _feature='DISTANCE_TO_EDGE')
+        keep = N(m, 'MapRange', Value=(N(m, 'TexNoise', Vector=(co, 'Object'), Scale=5.0), 'Fac'), **{'From Min': 0.55, 'From Max': 0.6})
+        return M(m, 'MULTIPLY', (N(m, 'MapRange', Value=(e, 'Distance'), **{'From Max': 0.025, 'To Min': 1.0, 'To Max': 0.0}), 'Result'),
+                 (keep, 'Result'))
+    scr = M(m, 'MAXIMUM', scratch(0.6, 9.0), scratch(-1.1, 14.0))
+    v = (M(m, 'MULTIPLY', v, M(m, 'SUBTRACT', 1.0, scr)), 0)
+    col = N(m, 'Mix', _data_type='RGBA', Factor=v, A=(base, 'Color'), B=(0.08, 0.25, 0.17, 1))
+    col = N(m, 'Mix', _data_type='RGBA', Factor=M(m, 'MULTIPLY', scr, 0.8), A=(col, 'Result'), B=(0.75, 0.52, 0.22, 1))
+    met = N(m, 'MapRange', Value=v, **{'To Min': 1.0, 'To Max': 0.0})
+    rough = N(m, 'MapRange', Value=M(m, 'ADD', v, M(m, 'MULTIPLY', (nz, 'Fac'), 0.4)), **{'To Min': 0.22, 'To Max': 0.9})
+    b = N(m, 'Bump', Strength=0.25, Distance=0.01, Height=M(m, 'SUBTRACT', M(m, 'ADD', (vn, 'Fac'), v), M(m, 'MULTIPLY', scr, 0.3)))
     N(m, 'OutputMaterial', Surface=N(m, 'BsdfPrincipled', **{'Base Color': (col, 'Result'), 'Metallic': (met, 'Result'),
                                                              'Roughness': (rough, 'Result'), 'Normal': b}))
     return m
@@ -54,8 +69,11 @@ def canvas(name):
     z = N(m, 'SeparateXYZ', Vector=(geo, 'Position'))
     dirt = N(m, 'MapRange', Value=M(m, 'ADD', (z, 'Z'), M(m, 'MULTIPLY', (nz, 'Fac'), 0.9)), **{'From Min': 0.6, 'From Max': 1.9,
                                                                                             'To Min': 1.0, 'To Max': 0.0})
-    base = ramp(m, (nz, 'Fac'), [(0.3, (0.3, 0.19, 0.08)), (0.72, (0.6, 0.42, 0.2))])
-    col = N(m, 'Mix', _data_type='RGBA', Factor=(dirt, 'Result'), A=(base, 'Color'), B=(0.13, 0.12, 0.07, 1))
+    base = ramp(m, (nz, 'Fac'), [(0.3, (0.27, 0.17, 0.075)), (0.72, (0.5, 0.36, 0.18))])
+    sn = N(m, 'TexNoise', Vector=(co, 'Object'), Scale=3.5, Detail=4.0)  # water stains
+    stain = N(m, 'MapRange', Value=(sn, 'Fac'), **{'From Min': 0.4, 'From Max': 0.62, 'To Min': 0.68, 'To Max': 1.1})
+    base = N(m, 'Mix', _data_type='RGBA', _blend_type='MULTIPLY', Factor=1.0, A=(base, 'Color'), B=(stain, 'Result'))
+    col = N(m, 'Mix', _data_type='RGBA', Factor=(dirt, 'Result'), A=(base, 'Result'), B=(0.13, 0.12, 0.07, 1))
     col = ao_grime(m, (col, 'Result'), 0.12, 0.3)
     b = N(m, 'Bump', Strength=0.18, Distance=0.004, Height=M(m, 'ADD', (w1, 'Fac'), (w2, 'Fac')))
     N(m, 'OutputMaterial', Surface=N(m, 'BsdfPrincipled', **{'Base Color': col, 'Roughness': 0.85,

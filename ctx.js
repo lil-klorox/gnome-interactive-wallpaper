@@ -5,7 +5,8 @@ import GdkPixbuf from 'gi://GdkPixbuf';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import St from 'gi://St';
-import {parseManifest, sizeAt, frameOffset} from './render.js';
+import {PACKAGE_VERSION} from 'resource:///org/gnome/shell/misc/config.js';
+import {parseManifest, sizeAt, frameOffset, canvasBytes, tileRange, BUDGET} from './render.js';
 
 const STORE_MAX = 64 * 1024;
 const warn = msg => console.warn(`interactive-wallpaper: ${msg}`);
@@ -18,28 +19,33 @@ export function loadManifest(dir) {
     return parseManifest(new TextDecoder().decode(f.load_contents(null)[1]));
 }
 
-function upload(content, pb) {
-    const args = [pb.read_pixel_bytes(), pb.has_alpha ? Cogl.PixelFormat.RGBA_8888 : Cogl.PixelFormat.RGB_888,
-        pb.width, pb.height, pb.rowstride];
-    // GNOME 48+ takes the Cogl context first. Try the old form first: too few args throws before
-    // doing anything, while too many (old shell, new form) logs a GJS warning on every image.
-    try {
-        content.set_bytes(...args);
-    } catch {
-        content.set_bytes(global.stage.context.get_backend().get_cogl_context(), ...args);
-    }
+// GNOME 48 gave set_bytes() a Cogl context as its first argument.
+const COGL_ARG = parseInt(PACKAGE_VERSION) >= 48;
+
+function upload(content, bytes, format, w, h, stride) {
+    if (COGL_ARG)
+        content.set_bytes(global.stage.context.get_backend().get_cogl_context(), bytes, format, w, h, stride);
+    else
+        content.set_bytes(bytes, format, w, h, stride);
 }
 
+const uploadPixbuf = (content, pb) => upload(content, pb.read_pixel_bytes(),
+    pb.has_alpha ? Cogl.PixelFormat.RGBA_8888 : Cogl.PixelFormat.RGB_888, pb.width, pb.height, pb.rowstride);
+
 // Content is created now and stays empty (paints nothing) until the PNG decodes off the hot path.
+// rec.done turns true when the decode ends either way; rec.cbs run then (they count pending decodes).
 function load(sc, cancel, name) {
     const e = sc.man.images[name];
     if (!e)
         throw new Error(`no image "${name}" in scene ${sc.id}`);
     const content = St.ImageContent.new_with_preferred_size(Math.round(e.w * e.cols), Math.round(e.h * Math.ceil(e.n / e.cols)));
     const [w, h] = sizeAt(e, sc.k);
-    const fail = err => {
-        if (!err.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+    const rec = {e: Object.freeze({...e, content}), done: false, cbs: []};
+    const finish = err => {
+        if (err && !err.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
             warn(`${sc.id}/${name} failed to load: ${err.message}`);
+        rec.done = true;
+        rec.cbs.splice(0).forEach(f => f());
     };
     sc.dir.get_child('assets').get_child(`${name}.png`).read_async(GLib.PRIORITY_LOW, cancel, (f, r1) => {
         try {
@@ -47,16 +53,17 @@ function load(sc, cancel, name) {
             GdkPixbuf.Pixbuf.new_from_stream_at_scale_async(stream, w, h, false, cancel, (_s, r2) => {
                 try {
                     stream.close_async(GLib.PRIORITY_LOW, null, null);
-                    upload(content, GdkPixbuf.Pixbuf.new_from_stream_finish(r2));
+                    uploadPixbuf(content, GdkPixbuf.Pixbuf.new_from_stream_finish(r2));
+                    finish();
                 } catch (err) {
-                    fail(err);
+                    finish(err);
                 }
             });
         } catch (err) {
-            fail(err);
+            finish(err);
         }
     });
-    return Object.freeze({...e, content});
+    return rec;
 }
 
 function store(id) {
@@ -113,18 +120,87 @@ function store(id) {
     };
 }
 
-// sc = {id, dir, man, k} (one per mounted scene); cache + cancel live on the extension instance,
-// so every monitor and every sprite of a sheet share one texture.
-export function makeCtx(sc, cache, cancel, root, w, h, world) {
-    const image = name => {
+// A grid of textures the scene paints itself from bytes (see docs/writing-a-scene.md, Canvas). The
+// scene keeps its own state (a height field, say) and refills only the tiles it marked dirty.
+function canvas(sc, root, opts) {
+    const {w, h, tile = 256, px = 1} = opts ?? {};
+    const int = (v, max) => Number.isInteger(v) && v > 0 && v <= max;
+    if (!int(w, 16384) || !int(h, 16384) || !int(tile, 1024) || !(px > 0 && px <= 64))
+        throw new Error('canvas needs whole w, h, tile and a positive px');
+    const cols = Math.ceil(w / tile), rows = Math.ceil(h / tile), bytes = canvasBytes(w, h, tile);
+    if (sc.art + sc.canvas + bytes > BUDGET)
+        throw new Error('canvas over budget');
+    sc.canvas += bytes;
+    const actor = new Clutter.Actor({width: w * px, height: h * px});
+    root.connect('destroy', () => {  // freed with ctx.root, even if the scene never added it there
+        sc.canvas -= bytes;
+        actor.destroy();
+    });
+    const contents = [], dirty = new Uint8Array(cols * rows), buf = new Uint8Array(tile * tile * 4);
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+            const tw = Math.min(tile, w - c * tile), th = Math.min(tile, h - r * tile);
+            const content = St.ImageContent.new_with_preferred_size(tw, th);
+            const a = new Clutter.Actor({content, x: c * tile * px, y: r * tile * px, width: tw * px, height: th * px});
+            a.set_content_scaling_filters(Clutter.ScalingFilter.LINEAR, Clutter.ScalingFilter.LINEAR);
+            actor.add_child(a);
+            contents.push(content);
+        }
+    }
+    let left = 0;
+    return Object.freeze({
+        actor, cols, rows, tile,
+        dirty(x0, y0, x1, y1) {
+            const [c0, r0, c1, r1] = tileRange(x0, y0, x1, y1, tile, cols, rows);
+            for (let r = r0; r < r1; r++) {
+                for (let c = c0; c < c1; c++) {
+                    left += 1 - dirty[r * cols + c];
+                    dirty[r * cols + c] = 1;
+                }
+            }
+        },
+        // fill(buf, x, y, tw, th): write premultiplied RGBA for cells x..x+tw, y..y+th, row stride tw*4.
+        flush(fill, max = Infinity) {
+            for (let i = 0; i < dirty.length && left > 0 && max > 0; i++) {
+                if (!dirty[i])
+                    continue;
+                dirty[i] = 0;
+                left--;
+                max--;
+                const x = (i % cols) * tile, y = Math.floor(i / cols) * tile;
+                const tw = Math.min(tile, w - x), th = Math.min(tile, h - y);
+                fill(buf, x, y, tw, th);
+                upload(contents[i], new GLib.Bytes(buf.subarray(0, tw * th * 4)),
+                    Cogl.PixelFormat.RGBA_8888_PRE, tw, th, tw * 4);
+            }
+            return left;
+        },
+    });
+}
+
+// sc = {id, dir, man, k, art, canvas, settings} (one per mounted scene; art/canvas = texture bytes);
+// cache + cancel live on the extension instance, so every monitor and every sprite of a sheet share one
+// texture. t = the host's per-monitor record: {root, world, pending, onSettings}. monitor = {index, count, primary}.
+export function makeCtx(sc, cache, cancel, t, w, h, monitor) {
+    const image = (name, fallback) => {
+        if (!sc.man.images[name] && fallback !== undefined && sc.man.images[fallback]) {
+            if (!(sc.swapped ??= new Set()).has(name))
+                warn(`${sc.id}: no usable "${name}", using "${fallback}"`);
+            sc.swapped.add(name);
+            name = fallback;
+        }
         const key = `${sc.id}/${name}`;
-        let e = cache.get(key);
-        if (!e)
-            cache.set(key, e = load(sc, cancel, name));
-        return e;
+        let rec = cache.get(key);
+        if (!rec)
+            cache.set(key, rec = load(sc, cancel, name));
+        if (!rec.done && !t.world.ready) {  // the host keeps the root hidden until these land
+            t.pending++;
+            rec.cbs.push(() => t.pending--);
+        }
+        return rec.e;
     };
-    const sheet = name => {
-        const e = image(name);
+    const sheet = (name, fallback) => {
+        const e = image(name, fallback);
         const rows = Math.ceil(e.n / e.cols), xy = [0, 0];
         return {
             ...e,
@@ -147,5 +223,7 @@ export function makeCtx(sc, cache, cancel, root, w, h, world) {
         };
     };
     // ponytail: store is per scene load, so a quick off/on can overlap the old save with the new read; share by id if that bites.
-    return Object.freeze({root, w, h, ref: sc.man.ref, images: sc.man.images, world, image, sheet, store: (sc.store ??= store(sc.id))});
+    return Object.freeze({root: t.root, w, h, ref: sc.man.ref, images: sc.man.images, world: t.world, image, sheet,
+        monitor, canvas: opts => canvas(sc, t.root, opts),
+        store: (sc.store ??= store(sc.id)), settings: sc.settings, onSettings: fn => (t.onSettings = fn)});
 }

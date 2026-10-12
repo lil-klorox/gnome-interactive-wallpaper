@@ -1,5 +1,6 @@
 # Sand bed: a horizontally tiling strip of rippled wet sand with gravel, shells and starfish.
 # Seamless like the far plates (whole-period ripples, x-wrapped texture, edge objects duplicated).
+# `-- gravel` renders the optional dark gravel bed instead (same shape, assets/gravel.png).
 import math, os, sys
 import bpy
 import numpy as np
@@ -9,7 +10,8 @@ from common import *
 P = 24.0                 # period (world units) = 2400 px
 T = math.radians(TILT)
 FRONT, BACK = -1.2, 15.0
-FADE = (9.5, 13.5)       # sand fades out between these depths into the far plates
+FADE = (9.5, 13.5)
+FLAT = 0.35 if 'gravel' in sys.argv else 1  # gravel lies flatter: no ripples worth the name       # sand fades out between these depths into the far plates
 
 
 def heights(x, y):
@@ -24,7 +26,7 @@ def heights(x, y):
     rip = np.sin(2 * math.pi * y / 0.9 + bend * 2.5)
     crest = (1 - np.abs(rip)) ** 1.5 - 0.4                   # sharper crests, wide troughs
     amp = 0.03 + 0.025 * np.sin(2 * math.pi * 4 * x / P + 0.4 * y) ** 2
-    return h + crest * amp
+    return (h + crest * amp) * FLAT
 
 
 def fade_back(m):
@@ -38,20 +40,37 @@ def varied(name, stops, rough=0.5, coat=0.0, scale=6.0, bump=0.3, sss=0.0):
     """Per-object colour picked from a ramp by Object Info random, plus surface noise."""
     m = pbr(name, (0.5, 0.5, 0.5), rough=rough, coat=coat, scale=scale, bump=bump, sss=sss, grime=0.4)
     nt = m.node_tree
-    bs = principled(m)
     oi = N(m, 'ObjectInfo')
     col = ramp(m, (oi, 'Random'), stops)
     nz = next(n for n in nt.nodes if n.type == 'TEX_NOISE')
     mix = N(m, 'Mix', _data_type='RGBA', _blend_type='OVERLAY', Factor=0.5, A=(col, 'Color'), B=(nz, 'Color'))
-    ao = bs.inputs['Base Color'].links[0].from_node  # grime multiply node: feed it the new colour
-    nt.links.new(sock(mix.outputs, 'Result'), sock(ao.inputs, 'A'))
+    nt.links.new(sock(mix.outputs, 'Result'), sock(nt.nodes['macro'].inputs, 'A'))  # keeps colour patches + grime
     return m
 
 
-def pebbles(rnd, n):
-    mat = varied('gravel', [(0.0, (0.06, 0.05, 0.04)), (0.2, (0.25, 0.17, 0.1)), (0.4, (0.45, 0.33, 0.2)),
-                            (0.55, (0.35, 0.13, 0.06)), (0.7, (0.62, 0.55, 0.45)), (0.85, (0.15, 0.13, 0.11)),
-                            (1.0, (0.8, 0.72, 0.6))], rough=0.45, coat=0.3)
+DARK = [(0.0, (0.04, 0.035, 0.03)), (0.3, (0.1, 0.085, 0.07)), (0.5, (0.18, 0.14, 0.1)), (0.65, (0.08, 0.075, 0.075)),
+        (0.8, (0.3, 0.24, 0.17)), (0.92, (0.15, 0.08, 0.04)), (1.0, (0.45, 0.42, 0.38))]
+
+
+def gravel_mat(wrap):
+    """Dark aquarium gravel: voronoi cells as rounded stones, each its own tone, wet sheen."""
+    m = pbr('gravelbed', (0.05, 0.045, 0.04), rough=0.6, scale=0.6, bump=0.0, grime=0.6, wrap=wrap)
+    nt = m.node_tree
+    bs = principled(m)
+    co = next(n for n in nt.nodes if n.type == 'COMBXYZ').outputs[0]
+    vo = N(m, 'TexVoronoi', Scale=17.0, Randomness=0.9)
+    nt.links.new(co, vo.inputs['Vector'])
+    col = ramp(m, (vo, 'Color'), DARK)
+    nt.links.new(col.outputs['Color'], sock(nt.nodes['macro'].inputs, 'A'))  # stone colours, keeping patches + grime
+    dome = M(m, 'SUBTRACT', 1.0, M(m, 'POWER', (vo, 'Distance'), 2.0))
+    nt.links.new(N(m, 'Bump', Strength=0.9, Distance=0.03, Height=dome).outputs[0], bs.inputs['Normal'])
+    return m
+
+
+def pebbles(rnd, n, stops=None, rough=0.45, coat=0.3):
+    mat = varied('gravel', stops or [(0.0, (0.06, 0.05, 0.04)), (0.2, (0.25, 0.17, 0.1)), (0.4, (0.45, 0.33, 0.2)),
+                                     (0.55, (0.35, 0.13, 0.06)), (0.7, (0.62, 0.55, 0.45)), (0.85, (0.15, 0.13, 0.11)),
+                                     (1.0, (0.8, 0.72, 0.6))], rough=rough, coat=coat)
     shapes = []
     for i in range(10):
         bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=4, radius=1, location=(0, -40 - i * 3, 0))
@@ -145,7 +164,8 @@ def starfish(mat, rnd):
     return o
 
 
-def build():
+def build(name='sand'):
+    gravel = name == 'gravel'
     scenery()
     rnd = np.random.default_rng(7)
     nx, ny = 700, 220
@@ -155,10 +175,10 @@ def build():
     for y in ys:
         verts += [(x, y, z) for x, z in zip(xs, heights(xs, y))]
     faces = [(j * nx + i, j * nx + i + 1, (j + 1) * nx + i + 1, (j + 1) * nx + i) for j in range(ny - 1) for i in range(nx - 1)]
-    sm = sand_mat(P)
-    bed = mesh('sand', verts, faces, sm)
+    sm = gravel_mat(P) if gravel else sand_mat(P)
+    bed = mesh(name, verts, faces, sm)
     wrap(bed, P)
-    pebbles(rnd, 420)
+    pebbles(rnd, 1400, DARK, 0.65, 0.0) if gravel else pebbles(rnd, 420)
     shell_m = varied('shell', [(0.0, (0.75, 0.62, 0.5)), (0.3, (0.8, 0.45, 0.35)), (0.55, (0.85, 0.75, 0.6)),
                                (0.8, (0.6, 0.3, 0.15)), (1.0, (0.9, 0.85, 0.8))], rough=0.35, coat=0.6, scale=14, bump=0.4, sss=0.1)
     star_m = varied('starfish', [(0.0, (0.75, 0.22, 0.06)), (0.4, (0.85, 0.42, 0.1)), (0.7, (0.55, 0.1, 0.25)),
@@ -170,7 +190,7 @@ def build():
     protos = [scallop(shell_m), spiral(shell_m)] + [starfish(star_m, rnd) for _ in range(3)]
     for p in protos:
         p.location = (0, -60, 0)
-    for i in range(30):
+    for i in range(12 if gravel else 30):
         k = 0 if i < 13 else 1 if i < 24 else 2 + i % 3
         x, y = rnd.uniform(-P / 2, P / 2), rnd.uniform(FRONT + 0.3, FADE[0] - 1.5)
         c = protos[k].copy()
@@ -192,8 +212,12 @@ def build():
     v1 = BACK * math.sin(T) + 0.15
     hpx = round((v1 - v0) * PPU)
     camera(P, round(P * PPU), hpx, tilt=TILT, z=(v1 + v0) / 2 / math.cos(T))
-    render('sand.png')
-    manifest('sand', {'w': round(P * PPU), 'h': hpx})
+    render(f'{name}.png')
+    # top: the sand's visible back edge (first mostly-opaque row) at 32 points across, so food lands on it
+    a = load_png(os.path.join(ASSETS, f'{name}.png'))[..., 3] > 0.5
+    cols = np.linspace(0, a.shape[1] - 1, 32).astype(int)
+    top = [round(float(np.argmax(a[:, c])) if a[:, c].any() else float(hpx), 1) for c in cols]
+    manifest(name, {'w': round(P * PPU), 'h': hpx, 'top': top})
 
 
-build()
+build('gravel' if 'gravel' in sys.argv else 'sand')

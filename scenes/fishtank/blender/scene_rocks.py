@@ -89,22 +89,50 @@ def air_stone(mat, tube_mat):
     return [st, tube, nip]
 
 
+def weather(m, stain=0.35, silt=0.5):
+    """Break up a rock: vertical mineral stains (warm and cool) and pale silt settled on top faces,
+    both fed into pbr's first colour stage so grime and moss still sit over them."""
+    nt, mac = m.node_tree, m.node_tree.nodes['macro']
+    base = mac.inputs['A'].links[0].from_socket
+    co = N(m, 'Mapping', Vector=(N(m, 'TexCoord'), 'Object'), Scale=(3.0, 3.0, 0.5))  # streaks run down
+    sn = N(m, 'TexNoise', Vector=co, Scale=2.2, Detail=6.0, Roughness=0.7)
+    tint = ramp(m, (sn, 'Fac'), [(0.3, (0.75, 0.82, 0.95)), (0.5, (1, 1, 1)), (0.7, (1.15, 0.95, 0.75))])
+    col = N(m, 'Mix', _data_type='RGBA', _blend_type='MULTIPLY', Factor=stain, B=(tint, 'Color'))
+    nt.links.new(base, sock(col.inputs, 'A'))
+    up = N(m, 'SeparateXYZ', Vector=(N(m, 'NewGeometry'), 'Normal'))
+    dn = N(m, 'TexNoise', Vector=(N(m, 'TexCoord'), 'Object'), Scale=7.0, Detail=4.0)
+    mask = N(m, 'MapRange', Value=M(m, 'MULTIPLY', (up, 'Z'), M(m, 'ADD', (dn, 'Fac'), 0.4)), **{'From Min': 0.75, 'From Max': 1.05})
+    col = N(m, 'Mix', _data_type='RGBA', Factor=M(m, 'MULTIPLY', (mask, 'Result'), silt), A=(col, 'Result'), B=(0.3, 0.26, 0.19, 1))
+    nt.links.new(sock(col.outputs, 'Result'), mac.inputs['A'])
+    return m
+
+
+def rockmat(name, moss, c1=(0.07, 0.065, 0.06), c2=(0.2, 0.17, 0.13)):
+    """common.stone() with fewer cracks (its crack net read as a tiled pattern) plus weathering."""
+    m = pbr(name, c1, c2, rough=0.85, scale=1.6, bump=0.5, vor=0.2, moss=moss, grime=0.7, cracks=0.3, strata=0.2)
+    for n in m.node_tree.nodes:  # only a few edges of the voronoi net crack, not the whole grid
+        if n.type == 'MAP_RANGE' and abs(n.inputs['From Min'].default_value - 0.56) < 1e-6:
+            n.inputs['From Min'].default_value, n.inputs['From Max'].default_value = 0.42, 0.46
+    return weather(m)
+
+
 def build():
     scenery()
     rnd = np.random.default_rng(4)
     ground(30)
     a = rock((1.5, 1.1, 0.95), 0.35, 1)
-    a.data.materials.append(stone('rock_a', moss=0.6))
+    a.data.materials.append(rockmat('rock_a', moss=0.6))
     b = rock((0.8, 0.7, 1.7), 0.3, 5, facets=0.02)
-    b.data.materials.append(stone('rock_b', moss=0.45, c1=(0.09, 0.075, 0.06), c2=(0.24, 0.19, 0.14)))
+    b.data.materials.append(rockmat('rock_b', moss=0.45, c1=(0.09, 0.075, 0.06), c2=(0.24, 0.19, 0.14)))
     c = [rock((s, s * 0.85, s * 0.7), 0.15 * s, 11 + i, facets=0.08, loc=(x, y, 0))
          for i, (s, x, y) in enumerate(((0.55, 0, 0), (0.38, 0.75, -0.25), (0.3, -0.62, 0.15), (0.2, 0.42, -0.5)))]
     river = pbr('river', (0.1, 0.075, 0.05), (0.3, 0.22, 0.15), rough=0.45, coat=0.15, scale=2.5, bump=0.15, moss=0.3, strata=0.3)
+    weather(river, 0.25, 0.35)
     for o in c:
         o.data.materials.append(river)
     anem = pbr('anemone', (0.65, 0.12, 0.3), (0.95, 0.45, 0.55), rough=0.4, scale=6, bump=0.2, sss=0.5, grime=0.2)
     c += tentacles(rnd, (0.05, -0.05, 0.36), anem)
-    d = arch(stone('rock_d', moss=0.55, c1=(0.06, 0.06, 0.055), c2=(0.18, 0.16, 0.13)))
+    d = arch(rockmat('rock_d', moss=0.55, c1=(0.06, 0.06, 0.055), c2=(0.18, 0.16, 0.13)))
     porous = pbr('airstone', (0.35, 0.38, 0.42), (0.6, 0.62, 0.65), rough=0.95, scale=12, bump=0.8, vor=1.0, grime=0.8)
     glass = new_mat('tubing')
     N(glass, 'OutputMaterial', Surface=N(glass, 'BsdfGlass', Color=(0.85, 0.95, 0.9, 1), Roughness=0.08, IOR=1.4))
@@ -118,6 +146,8 @@ def build():
         if name == 'bubbler':
             pts['outlet'] = (0, 0, 0.36)
         sprite(name, pts)
+        if name != 'bubbler':
+            mark_rest(name)
     # bubble: an air pocket in water (IOR < 1 gives the bright total-reflection rim)
     reset(256)
     bpy.context.scene.cycles.film_transparent_glass = True

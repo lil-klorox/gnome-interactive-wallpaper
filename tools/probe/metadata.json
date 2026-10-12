@@ -1,1 +1,1 @@
-{"uuid":"probe@scratch","name":"probe","description":"dev.sh --headless driver, never shipped","shell-version":["45","46","47","48","49"]}
+{"uuid":"probe@dev","name":"probe","description":"dev.sh --headless driver, never shipped","shell-version":["45","46","47","48","49"]}

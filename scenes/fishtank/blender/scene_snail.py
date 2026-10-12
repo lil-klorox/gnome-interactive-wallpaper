@@ -46,6 +46,9 @@ def shell_mat():
     apex = N(m, 'MapRange', Value=(sp, 'X'), **{'From Min': 0.0, 'From Max': 0.25, 'To Min': 0.55, 'To Max': 1.0})
     c = N(m, 'Mix', _data_type='RGBA', _blend_type='MULTIPLY', Factor=1.0, A=(col, 'Color'), B=(apex, 'Result'))
     c = N(m, 'Mix', _data_type='RGBA', _blend_type='OVERLAY', Factor=0.3, A=(c, 'Result'), B=(nz, 'Color'))
+    wear = N(m, 'MapRange', Value=(N(m, 'TexNoise', Vector=uv, Scale=4.0, Detail=2.0), 'Fac'),
+             **{'From Min': 0.3, 'From Max': 0.7, 'To Min': 0.7, 'To Max': 1.1})  # faded, worn patches
+    c = N(m, 'Mix', _data_type='RGBA', _blend_type='MULTIPLY', Factor=1.0, A=(c, 'Result'), B=(wear, 'Result'))
     bump = N(m, 'Bump', Strength=0.35, Distance=0.01, Height=M(m, 'ADD', ridge, M(m, 'MULTIPLY', (nz, 'Fac'), 0.4)))
     bs = N(m, 'BsdfPrincipled', **{'Base Color': (c, 'Result'), 'Roughness': 0.35, 'Coat Weight': 0.35,
                                   'Coat Roughness': 0.08, 'Subsurface Weight': 0.0, 'Normal': bump})

@@ -6,6 +6,7 @@ import math
 import os
 import random
 import struct
+import tempfile
 import bpy
 import numpy as np
 from bpy_extras.object_utils import world_to_camera_view
@@ -223,9 +224,17 @@ def pbr(name, c1, c2=None, rough=0.6, metal=0.0, scale=3.0, bump=0.25, moss=0.0,
         height = M(m, 'MULTIPLY_ADD', crack, cracks, height)
         col = (N(m, 'Mix', _data_type='RGBA', _blend_type='MULTIPLY', Factor=M(m, 'SUBTRACT', 1.0, crack), A=col,
                  B=(0.4, 0.4, 0.4, 1)), 'Result')
+    # macro value variation (big soft patches, x0.85-1.15) so no surface reads as one flat fill
+    mac = N(m, 'TexNoise', Vector=co, Scale=scale * 0.15, Detail=2.0)
+    mv = N(m, 'MapRange', Value=(mac, 'Fac'), **{'From Min': 0.3, 'From Max': 0.7, 'To Min': 0.85, 'To Max': 1.15})
+    col = (N(m, 'Mix', _data_type='RGBA', _blend_type='MULTIPLY', Factor=1.0, A=col, B=(mv, 'Result')), 'Result')
+    col[0].name = 'macro'  # first colour stage: callers that swap the base colour link into its A
     if grime:
         col = ao_grime(m, col, 0.25, 1 - grime)
-    r = rough
+        col = ao_grime(m, col, 0.8, 1 - grime * 0.45)  # broad occlusion: bases and under-hangs darker
+    rn = N(m, 'TexNoise', Vector=co, Scale=scale * 0.3, Detail=2.0)
+    r = (N(m, 'MapRange', Value=(rn, 'Fac'), **{'From Min': 0.3, 'From Max': 0.7, 'To Min': max(0, rough - 0.12),
+                                                 'To Max': min(1, rough + 0.12)}), 'Result')  # sheen breaks up
     if moss:
         geo = N(m, 'NewGeometry')
         up = N(m, 'SeparateXYZ', Vector=(geo, 'Normal'))
@@ -411,11 +420,7 @@ def crop_frames(names, pad=6, cut=8):
     their manifest points to match and record the crop offset as ox/oy."""
     paths = [os.path.join(ASSETS, n + '.png') for n in names]
     pxs = [load_png(p) for p in paths]
-    H, W = pxs[0].shape[:2]
-    a = np.stack(pxs)[..., 3].max(0) > cut / 255  # np.stack fails loudly if sizes differ
-    ys, xs = np.nonzero(a.sum(1) >= 3)[0], np.nonzero(a.sum(0) >= 3)[0]  # ignore stray noise specks
-    x0, x1 = max(0, xs.min() - pad), min(W, xs.max() + 1 + pad)
-    y0, y1 = max(0, ys.min() - pad), min(H, ys.max() + 1 + pad)
+    x0, x1, y0, y1 = _box(pxs, pad, cut)
     ents = []
     for n, p, px in zip(names, paths, pxs):
         save_png(px[y0:y1, x0:x1], p)
@@ -430,6 +435,66 @@ def crop_frames(names, pad=6, cut=8):
         print('sprite', n, ent)
         ents.append(ent)
     return ents
+
+
+def _box(pxs, pad, cut):
+    """Union crop box (x0, x1, y0, y1) of same-size frames' visible pixels."""
+    H, W = pxs[0].shape[:2]
+    a = np.stack(pxs)[..., 3].max(0) > cut / 255  # np.stack fails loudly if sizes differ
+    ys, xs = np.nonzero(a.sum(1) >= 3)[0], np.nonzero(a.sum(0) >= 3)[0]  # ignore stray noise specks
+    return max(0, xs.min() - pad), min(W, xs.max() + 1 + pad), max(0, ys.min() - pad), min(H, ys.max() + 1 + pad)
+
+
+def project(co):
+    """World point -> [x, y] px in the current render frame."""
+    s = bpy.context.scene
+    v = world_to_camera_view(s, s.camera, Vector(co))
+    return [float(v.x * s.render.resolution_x), float((1 - v.y) * s.render.resolution_y)]
+
+
+def sheet(name, poses, cols, points=None, pad=6, cut=8, extra=None):
+    """Sprite sheet: render one full frame per pose() call, crop all to their union (frames still
+    overlay), tile row-major into assets/<name>.png, write {w, h, n, cols, px, points, extra}.
+    points: key -> world co (or a callable returning one), projected right after poses[0]()."""
+    s = bpy.context.scene
+    pxs, pts = [], {}
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, 'f.png')
+        for i, pose in enumerate(poses):
+            pose()
+            bpy.context.view_layer.update()
+            if not i:
+                pts = {k: project(co() if callable(co) else co) for k, co in (points or {}).items()}
+            s.render.filepath = path
+            bpy.ops.render.render(write_still=True)
+            pxs.append(load_png(path))
+    x0, x1, y0, y1 = _box(pxs, pad, cut)
+    fw, fh, n = int(x1 - x0), int(y1 - y0), len(pxs)
+    out = np.zeros((-(-n // cols) * fh, cols * fw, 4), np.float32)
+    for i, p in enumerate(pxs):
+        r, c = divmod(i, cols)
+        out[r * fh:(r + 1) * fh, c * fw:(c + 1) * fw] = p[y0:y1, x0:x1]
+    save_png(out, os.path.join(ASSETS, name + '.png'))
+    ent = dict(w=fw, h=fh, n=n, cols=cols, **{k: [round(x - float(x0), 1), round(y - float(y0), 1)] for k, (x, y) in pts.items()})
+    ent.update(extra or {})
+    manifest(name, ent)
+    print('sheet', name, ent)
+    return ent
+
+
+def mark_rest(name, over=None):
+    """Add `rest` = [x, y] to name's manifest entry: the top edge (median over the middle 60 % of
+    columns) where falling food comes to lie on it. over: a separately cropped overlay on top of it
+    (chest lid), placed by ox/oy; its top edge is used instead."""
+    with open(os.path.join(ASSETS, 'manifest.json')) as f:
+        fcntl.flock(f, fcntl.LOCK_SH)
+        imgs = json.load(f)['images']
+    ent, src = imgs[name], imgs[over or name]
+    a = load_png(os.path.join(ASSETS, (over or name) + '.png'))[..., 3] > 0.5
+    mid = a[:, int(a.shape[1] * 0.2):int(a.shape[1] * 0.8)]
+    y = float(np.median([np.argmax(c) for c in mid.T if c.any()])) + src.get('oy', 0) - ent.get('oy', 0)
+    ent['rest'] = [round(ent['w'] / 2, 1), round(y, 1)]
+    manifest(name, ent)
 
 
 def load_png(path):

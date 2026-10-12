@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Interactive Wallpaper
+Comment=Settings for the live wallpaper
+Exec=gnome-extensions prefs interactive-wallpaper@lil-klorox
+Icon=preferences-desktop-wallpaper-symbolic
+Terminal=false
+StartupNotify=false
+Categories=Settings;GNOME;GTK;
+Keywords=wallpaper;background;fish;live;

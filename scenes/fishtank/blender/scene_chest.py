@@ -29,6 +29,9 @@ def wood(name, c1, c2, moss=0.0):
     col = ramp(m, g, [(0.25, c1), (0.75, c2)])
     tone = ramp(m, (rnd, 'Random'), [(0.0, (0.75, 0.75, 0.75)), (1.0, (1.15, 1.1, 1.0))])
     c = N(m, 'Mix', _data_type='RGBA', _blend_type='MULTIPLY', Factor=1.0, A=(col, 'Color'), B=(tone, 'Color'))
+    stain = N(m, 'TexNoise', Vector=(co, 'Object'), Scale=1.2, Detail=2.0)  # water stains: big soft patches
+    sv = N(m, 'MapRange', Value=(stain, 'Fac'), **{'From Min': 0.3, 'From Max': 0.7, 'To Min': 0.75, 'To Max': 1.12})
+    c = N(m, 'Mix', _data_type='RGBA', _blend_type='MULTIPLY', Factor=1.0, A=(c, 'Result'), B=(sv, 'Result'))
     c = ao_grime(m, (c, 'Result'), 0.12, 0.4)
     geo = N(m, 'NewGeometry')
     pos = N(m, 'SeparateXYZ', Vector=(geo, 'Position'))
@@ -305,4 +308,5 @@ for f in range(10):
     hinge.rotation_euler.x = -OPEN * f / 9
     sprite(f'chest_lid_{f}', crop=False)
 crop_frames(['chest'])  # body and lid frames cropped apart; ox/oy keep them aligned
+mark_rest('chest', 'chest_lid_0')
 crop_frames([f'chest_lid_{f}' for f in range(10)])

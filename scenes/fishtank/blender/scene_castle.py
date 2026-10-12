@@ -16,7 +16,7 @@ SINK = 0.15     # everything starts this far under the sand
 
 # ---- materials ----
 
-def blockmat(name, c1, c2, moss=0.5, low=0.0, scale=2.5, rough=0.85, bump=0.8, wear=0.45):
+def blockmat(name, c1, c2, moss=0.5, low=0.0, scale=2.5, rough=0.85, bump=0.8, wear=0.45, tide=0.0, jit=1.0):
     """Stone blocks: per-block tone ('blk' attribute), drips, worn edges, grime, moss, pitted bump."""
     m = new_mat(name)
     co = N(m, 'TexCoord')
@@ -42,6 +42,20 @@ def blockmat(name, c1, c2, moss=0.5, low=0.0, scale=2.5, rough=0.85, bump=0.8, w
         lz = N(m, 'MapRange', Value=M(m, 'MULTIPLY_ADD', (nz, 'Fac'), 0.5, (pos, 'Z')),
                **{'From Min': 0.1, 'From Max': 0.7, 'To Min': low, 'To Max': 0.0})
         col = (N(m, 'Mix', _data_type='RGBA', Factor=(lz, 'Result'), A=col, B=(0.12, 0.15, 0.05, 1)), 'Result')
+    # per-block hue/saturation jitter, and about one block in seven darker (a replaced or stained stone)
+    wn = N(m, 'TexWhiteNoise', _noise_dimensions='3D', Vector=(at, 'Vector'))
+    wc = N(m, 'SeparateXYZ', Vector=(wn, 'Color'))
+    val = M(m, 'SUBTRACT', M(m, 'MULTIPLY_ADD', (wc, 'Z'), -0.3, 1.1), M(m, 'MULTIPLY', M(m, 'GREATER_THAN', (wn, 'Value'), 0.85), 0.42))
+    col = (N(m, 'HueSaturation', Hue=M(m, 'MULTIPLY_ADD', (wc, 'X'), 0.09 * jit, 0.5 - 0.045 * jit),
+             Saturation=M(m, 'MULTIPLY_ADD', (wc, 'Y'), 0.9 * jit, 1 - 0.4 * jit),
+             Value=val, Color=col), 'Color')
+    if tide:  # old waterline: olive stain below a ragged line, darkest right at it
+        tn = N(m, 'TexNoise', Vector=(co, 'Object'), Scale=3.0, Detail=6.0)
+        edge = M(m, 'MULTIPLY_ADD', M(m, 'SUBTRACT', (tn, 'Fac'), 0.5), 0.35, (pos, 'Z'))
+        st = N(m, 'MapRange', Value=edge, **{'From Min': tide, 'From Max': tide - 0.15, 'To Max': 0.6})
+        ln = N(m, 'MapRange', Value=M(m, 'ABSOLUTE', M(m, 'SUBTRACT', edge, tide - 0.02)), **{'From Max': 0.035, 'To Min': 0.4, 'To Max': 0.0})
+        col = (N(m, 'Mix', _data_type='RGBA', _blend_type='MULTIPLY', Factor=M(m, 'ADD', (st, 'Result'), (ln, 'Result')), A=col,
+                 B=(0.25, 0.3, 0.12, 1)), 'Result')
     col = ao_grime(m, col, 0.12, 0.3)
     pit = N(m, 'TexVoronoi', Vector=(co, 'Object'), Scale=scale * 6, _feature='SMOOTH_F1')
     height = M(m, 'MULTIPLY_ADD', (fine, 'Fac'), 0.5, M(m, 'MULTIPLY_ADD', (pit, 'Distance'), 0.5, (nz, 'Fac')))
@@ -70,8 +84,8 @@ def plain(name, c, rough=0.9, metal=0.0, emit=None):
     return m
 
 
-STONE = blockmat('stone', (0.22, 0.17, 0.13), (0.75, 0.62, 0.48), moss=0.55, low=0.6)
-ROOF = blockmat('roof', (0.16, 0.04, 0.025), (0.36, 0.12, 0.06), moss=0.35, scale=4, rough=0.7, bump=0.25, wear=0.1)
+STONE = blockmat('stone', (0.2, 0.16, 0.12), (0.66, 0.55, 0.42), moss=0.55, low=0.6, tide=1.2)
+ROOF = blockmat('roof', (0.16, 0.04, 0.025), (0.36, 0.12, 0.06), moss=0.35, scale=4, rough=0.7, bump=0.25, wear=0.1, jit=0.35)
 MORTAR = pbr('mortar', (0.07, 0.06, 0.045), (0.14, 0.12, 0.08), rough=0.95, scale=6, grime=0.8)
 VOID = plain('void', (0.005, 0.008, 0.01), rough=1.0)
 GLOW = plain('glow', (0.02, 0.015, 0.01), emit=((1.0, 0.5, 0.18), 0.3))  # one lit window: somebody's home

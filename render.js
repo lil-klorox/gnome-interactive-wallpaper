@@ -1,5 +1,5 @@
 // Pure texture math (no gi): budget scale, decoded sizes, sprite-sheet frames. Checked by check.js.
-export const BUDGET = 65e6;
+export const BUDGET = 100e6;  // decoded bytes of every image in the manifest, optional art included
 
 // Upper caps keep a bad manifest from sizing huge textures/loops.
 const pos = v => Number.isFinite(v) && v > 0 && v <= 16384;
@@ -41,9 +41,21 @@ export function bytesOf(images, k) {
 // bytes = bytesOf(images, 1). floor() in sizeAt keeps bytesOf(images, k) <= budget.
 export const scaleFor = (h, ref, bytes, budget = BUDGET) => Math.min(1, h / ref, Math.sqrt(budget / bytes));
 
+// Tallest monitor in physical px (Wayland geometry is logical; X11 is already physical). 0 with no
+// monitors, never -Infinity; the host skips the build then instead of using it.
+export const maxHeight = (mons, x11) => mons.reduce((h, m) => Math.max(h, m.height * (x11 ? 1 : m.geometry_scale ?? 1)), 0);
+
 // out: pass a reused pair to keep per-frame calls allocation-free.
 export const frameOffset = (e, i, out = [0, 0]) => {
     out[0] = (i % e.cols) * e.w;
     out[1] = Math.floor(i / e.cols) * e.h;
     return out;
 };
+
+// Canvas grid (ctx.canvas): bytes of every tile, edge tiles counted whole since that's what's allocated.
+export const canvasBytes = (w, h, tile) => Math.ceil(w / tile) * Math.ceil(h / tile) * tile * tile * 4;
+
+// Tiles a cell rect touches: [c0, r0, c1, r1], end-exclusive and clamped (empty when c0 >= c1 or r0 >= r1).
+export const tileRange = (x0, y0, x1, y1, tile, cols, rows) => [
+    Math.max(0, Math.floor(x0 / tile)), Math.max(0, Math.floor(y0 / tile)),
+    Math.min(cols, Math.ceil(x1 / tile)), Math.min(rows, Math.ceil(y1 / tile))];

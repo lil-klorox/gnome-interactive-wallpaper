@@ -67,7 +67,7 @@ class Geo:
 
 
 def leaf_mat(name, base, tip, vein, alt=None, old=0.15, veins='net', trans=0.35, rough=0.45, coat=0.0,
-             zramp=None, spots=0.0, algae=0.3):
+             zramp=None, spots=0.0, algae=0.3, holes=0.0):
     """Translucent leaf: base->tip colour, veins, per-leaf hue shift, old leaves brown at the
     edges with holes, algae speckles toward the tip. zramp=(height, [(pos, rgb)]) colours by
     height instead (ludwigia reddens toward the light)."""
@@ -85,6 +85,10 @@ def leaf_mat(name, base, tip, vein, alt=None, old=0.15, veins='net', trans=0.35,
     col = (col, 'Color')
     if alt:
         col = (N(m, 'Mix', _data_type='RGBA', Factor=M(m, 'MULTIPLY', (rnd, 'Fac'), 0.7), A=col, B=(*alt, 1)), 'Result')
+    # every leaf its own shade: hue +-0.03, value +-6 %
+    r2 = M(m, 'FRACT', M(m, 'MULTIPLY', (rnd, 'Fac'), 7.31))
+    col = (N(m, 'HueSaturation', Hue=M(m, 'MULTIPLY_ADD', (rnd, 'Fac'), 0.08, 0.46), Value=M(m, 'MULTIPLY_ADD', r2, 0.12, 0.94),
+             Color=col), 'Color')
     nz = N(m, 'TexNoise', Vector=(co, 'Object'), Scale=9.0, Detail=6.0)
     col = (N(m, 'Mix', _data_type='RGBA', _blend_type='OVERLAY', Factor=0.35, A=col, B=(nz, 'Color')), 'Result')
     # veins
@@ -113,8 +117,17 @@ def leaf_mat(name, base, tip, vein, alt=None, old=0.15, veins='net', trans=0.35,
               **{'From Min': 0.78, 'From Max': 0.9})
     brown = M(m, 'MULTIPLY', (patch, 'Result'), (oldm, 'Result'))
     col = (N(m, 'Mix', _data_type='RGBA', Factor=brown, A=col, B=(0.2, 0.11, 0.03, 1)), 'Result')
+    # dry brown tips on about half the leaves, ragged edge
+    tipm = N(m, 'MapRange', Value=M(m, 'ADD', (sp, 'Y'), M(m, 'MULTIPLY', (bn, 'Fac'), 0.12)), **{'From Min': 0.86, 'From Max': 0.93})
+    col = (N(m, 'Mix', _data_type='RGBA', Factor=M(m, 'MULTIPLY', (tipm, 'Result'), M(m, 'GREATER_THAN', r2, 0.5)), A=col,
+             B=(0.16, 0.09, 0.025, 1)), 'Result')
     hv = N(m, 'TexVoronoi', Vector=(co, 'Object'), Scale=14.0)
     hole = M(m, 'MULTIPLY', M(m, 'LESS_THAN', (hv, 'Distance'), 0.13), M(m, 'MULTIPLY', (oldm, 'Result'), M(m, 'GREATER_THAN', (patch, 'Result'), 0.3)))
+    if holes:  # snail/age holes on big leaves: a few voronoi cells punched out, never at the rim
+        bv = N(m, 'TexVoronoi', Vector=(co, 'Object'), Scale=6.0)
+        pick = M(m, 'GREATER_THAN', (N(m, 'TexWhiteNoise', _noise_dimensions='3D', Vector=(bv, 'Color')), 'Value'), 1 - 0.22 * holes)
+        h2 = M(m, 'MULTIPLY', M(m, 'MULTIPLY', M(m, 'LESS_THAN', (bv, 'Distance'), 0.17), pick), M(m, 'LESS_THAN', du, 0.75))
+        hole = M(m, 'MAXIMUM', hole, h2)
     bump = N(m, 'Bump', Strength=0.25, Distance=0.02, Height=M(m, 'ADD', vn, M(m, 'MULTIPLY', (nz, 'Fac'), 0.3)))
     bsdf = N(m, 'BsdfPrincipled', **{'Base Color': col, 'Roughness': rough, 'Normal': bump, 'Coat Weight': coat,
                                     'Subsurface Weight': 0.15})
@@ -201,7 +214,7 @@ def sword(h):
         g.add(strip(pts, lance(random.uniform(0.15, 0.2), 0.8), az + math.pi / 2, twist=random.uniform(-0.6, 0.6),
                     m=9, cup=0.22, wave=0.06))
     mat = leaf_mat('sword', (0.09, 0.22, 0.04), (0.2, 0.42, 0.08), (0.45, 0.6, 0.22), alt=(0.16, 0.3, 0.03),
-                   old=0.18, trans=0.35, coat=0.2)
+                   old=0.18, trans=0.35, coat=0.2, holes=1)
     st = curve('swordstem', petioles, 1.0, radii=lambda t: 0.028 * (1 - 0.5 * t),
                mat=stem_mat('swst', (0.15, 0.28, 0.06), (0.25, 0.35, 0.1)), res=3)
     return [g.obj('sword', mat), st, roots(V((0, 0, 0)), 10, 0.5, 0.55)]
@@ -225,7 +238,7 @@ def javafern(h):
                 p2 = arc(tip, a2, math.radians(random.uniform(20, 70)), 0.12, droop=1, n=6)
                 g.add(strip(p2, lance(0.025), a2 + math.pi / 2, m=3, cup=0.2), rnd=0.3)
     mat = leaf_mat('jfern', (0.04, 0.12, 0.03), (0.1, 0.25, 0.05), (0.18, 0.32, 0.08), alt=(0.08, 0.16, 0.02),
-                   old=0.15, trans=0.25, rough=0.4, spots=0.6)
+                   old=0.15, trans=0.25, rough=0.4, spots=0.6, holes=1)
     stem = stem_mat('jfrh', (0.03, 0.02, 0.012), (0.08, 0.05, 0.025))
     rhz = curve('rhizome', [rh], 1.0, radii=lambda t: 0.035, mat=stem, res=3)
     hair = [arc(p, random.uniform(0, math.tau), random.uniform(-0.6, -0.1), random.uniform(0.08, 0.2), n=5, wob=3)
@@ -305,7 +318,7 @@ def anubias(h):
         g.add(strip(pts, lambda t, W=W: W * math.sin(math.pi * min(1, t ** 0.85 + 0.02)) ** 0.7 + 0.003,
                     az + math.pi / 2, m=9, cup=0.25, twist=random.uniform(-0.4, 0.4)))
     mat = leaf_mat('anubias', (0.03, 0.1, 0.02), (0.06, 0.18, 0.04), (0.12, 0.22, 0.06), alt=(0.05, 0.14, 0.02),
-                   old=0.12, trans=0.12, rough=0.3, coat=0.5, spots=0.8, algae=0.4)
+                   old=0.12, trans=0.12, rough=0.3, coat=0.5, spots=0.8, algae=0.4, holes=1)
     stem = stem_mat('anrh', (0.04, 0.07, 0.02), (0.1, 0.12, 0.04))
     hair = [arc(p, random.uniform(0, math.tau), random.uniform(-0.7, -0.2), random.uniform(0.15, 0.35), n=6, wob=2)
             for p in rh[::2] for _ in range(2)]
