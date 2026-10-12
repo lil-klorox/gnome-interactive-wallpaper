@@ -105,10 +105,11 @@ def lights():
     ]
 
 
-def scenery(samples=256):
-    """reset + the shared rig + a broad soft light from the surface, for scenery props."""
-    s = reset(samples)
-    key, fill, rim = lights()
+def scenery(samples=None):
+    """reset + the shared rig + a broad soft light from the surface, for scenery props.
+    samples defaults to the SAMPLES env var, else 256."""
+    s = reset(samples or int(os.environ.get('SAMPLES', 256)))
+    key, fill, _ = lights()
     fill.data.energy = 50  # less flat front light than the fish get: props need modelling
     key.data.energy = 4.0
     top = bpy.data.objects.new('top', bpy.data.lights.new('top', 'AREA'))
@@ -223,9 +224,7 @@ def pbr(name, c1, c2=None, rough=0.6, metal=0.0, scale=3.0, bump=0.25, moss=0.0,
         col = (N(m, 'Mix', _data_type='RGBA', _blend_type='MULTIPLY', Factor=M(m, 'SUBTRACT', 1.0, crack), A=col,
                  B=(0.4, 0.4, 0.4, 1)), 'Result')
     if grime:
-        ao = N(m, 'AmbientOcclusion', Distance=0.25, _samples=8)
-        g = N(m, 'MapRange', Value=(ao, 'AO'), **{'To Min': 1 - grime})
-        col = (N(m, 'Mix', _data_type='RGBA', _blend_type='MULTIPLY', Factor=1.0, A=col, B=(g, 'Result')), 'Result')
+        col = ao_grime(m, col, 0.25, 1 - grime)
     r = rough
     if moss:
         geo = N(m, 'NewGeometry')
@@ -247,15 +246,21 @@ def pbr(name, c1, c2=None, rough=0.6, metal=0.0, scale=3.0, bump=0.25, moss=0.0,
     return m
 
 
+def ao_grime(m, col, dist, lo):
+    """Darken colour socket col toward lo in crevices (AO); returns the new (node, socket)."""
+    ao = N(m, 'AmbientOcclusion', Distance=dist, _samples=8)
+    g = N(m, 'MapRange', Value=(ao, 'AO'), **{'To Min': lo})
+    return (N(m, 'Mix', _data_type='RGBA', _blend_type='MULTIPLY', Factor=1.0, A=col, B=(g, 'Result')), 'Result')
+
+
 def principled(mat):
     return next(n for n in mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
 
 
 def fog(amount, far=0.0, color=WATER, vmap=None):
-    """Fade every material toward the water colour: `amount` everywhere plus `far` more per
-    10 world units behind y=0 (alpha untouched, so plates stay cut-out). vmap=(a, b) instead
-    takes the colour from the backdrop gradient at height a*v + b, v = height on screen in world
-    units, so hazy far things melt into exactly the water behind them."""
+    """Fade every material toward the water colour: `amount` plus `far` more per 10 units behind
+    y=0 (alpha untouched). vmap=(a, b) takes the colour from the backdrop gradient at a*v + b,
+    v = height on screen in world units."""
     s = bpy.context.scene
     t = math.radians(TILT)
     for m in bpy.data.materials:
@@ -265,7 +270,6 @@ def fog(amount, far=0.0, color=WATER, vmap=None):
         out = next((n for n in nt.nodes if n.type == 'OUTPUT_MATERIAL'), None)
         if not out or not out.inputs['Surface'].links:
             continue
-        surf = out.inputs['Surface'].links[0].from_socket
         geo = N(m, 'NewGeometry')
         y = N(m, 'SeparateXYZ', Vector=(geo, 'Position'))
         f = M(m, 'MULTIPLY_ADD', (y, 'Y'), far / 10, amount)
@@ -276,13 +280,32 @@ def fog(amount, far=0.0, color=WATER, vmap=None):
             v.inputs[1].default_value = (0, math.sin(t), math.cos(t))
             g = ramp(m, M(m, 'MULTIPLY_ADD', (v, 'Value'), vmap[0], vmap[1]), BACKDROP)
             nt.links.new(g.outputs['Color'], em.inputs['Color'])
-        mix = N(m, 'MixShader', Fac=f)
-        nt.links.new(surf, mix.inputs[1])
-        nt.links.new(em.outputs[0], mix.inputs[2])
-        nt.links.new(mix.outputs[0], out.inputs['Surface'])
+        mix_surface(m, f, em)
 
 
-def mesh(name, verts, faces, mat=None, smooth=True):
+def mix_surface(m, fac, shader, first=False):
+    """Insert MixShader(fac) between m's final shader and its output; `shader` goes in the
+    second slot (the first if first=True)."""
+    nt = m.node_tree
+    out = next(n for n in nt.nodes if n.type == 'OUTPUT_MATERIAL')
+    surf = out.inputs['Surface'].links[0].from_socket
+    mix = N(m, 'MixShader', Fac=fac)
+    a, b = (shader.outputs[0], surf) if first else (surf, shader.outputs[0])
+    nt.links.new(a, mix.inputs[1])
+    nt.links.new(b, mix.inputs[2])
+    nt.links.new(mix.outputs[0], out.inputs['Surface'])
+
+
+def wrap(o, L):
+    """Copies of o one period L either side, so a tiling strip has no seam."""
+    for dx in (-L, L):
+        c = o.copy()
+        c.location.x += dx
+        bpy.context.scene.collection.objects.link(c)
+
+
+def mesh(name, verts, faces, mat=None, smooth=True, uv=None):
+    """Mesh object from verts/faces; uv = optional per-vertex UVs."""
     me = bpy.data.meshes.new(name)
     me.from_pydata(verts, [], faces)
     me.validate()
@@ -292,6 +315,32 @@ def mesh(name, verts, faces, mat=None, smooth=True):
     bpy.context.scene.collection.objects.link(o)
     if mat:
         me.materials.append(mat)
+    if uv is not None:
+        lay = me.uv_layers.new(name='UVMap')
+        for loop in me.loops:
+            lay.data[loop.index].uv = uv[loop.vertex_index]
+    return o
+
+
+def aim(normal):
+    """Euler turning +Z onto normal."""
+    return Vector((0, 0, 1)).rotation_difference(Vector(normal)).to_euler()
+
+
+def curve(name, paths, depth, mat, res=0, radii=None):
+    """One round-bevelled POLY curve object, a tube per point path; radii(t) tapers each."""
+    cu = bpy.data.curves.new(name, 'CURVE')
+    cu.dimensions, cu.bevel_depth, cu.bevel_resolution, cu.use_fill_caps = '3D', depth, res, True
+    for pts in paths:
+        sp = cu.splines.new('POLY')
+        sp.points.add(len(pts) - 1)
+        for i, p in enumerate(pts):
+            sp.points[i].co = (*p, 1)
+            if radii:
+                sp.points[i].radius = radii(i / (len(pts) - 1))
+    o = bpy.data.objects.new(name, cu)
+    bpy.context.scene.collection.objects.link(o)
+    cu.materials.append(mat)
     return o
 
 
@@ -309,13 +358,11 @@ def apply_all(o):
 
 
 def ground(size=8.0, z=0.0, soft=3.0, power=3000):
-    """Shadow-catcher floor so the sprite carries its own soft contact shadow. A big soft light
-    from straight above is linked to the floor only, so it darkens around the base without
-    changing how the prop itself is lit."""
+    """Shadow-catcher floor for a soft contact shadow, lit by its own floor-only light."""
     bpy.ops.mesh.primitive_plane_add(size=size, location=(0, 0, z))
     p = bpy.context.object
     p.is_shadow_catcher = True
-    # the caught shadow fades out on an ellipse (fit() sizes it to the frame) so it has no hard edge
+    # shadow fades out on an ellipse (fit() sizes it) so it has no hard edge
     m = new_mat('catcher')
     d = N(m, 'VectorMath', _operation='LENGTH', Vector=N(m, 'Mapping', Vector=(N(m, 'TexCoord'), 'Object')))
     d.inputs[0].links[0].from_node.name = 'fade'
@@ -363,25 +410,18 @@ def crop_frames(names, pad=6, cut=8):
     """Crop same-size PNGs to the union of their visible pixels (so frames still overlay), shift
     their manifest points to match and record the crop offset as ox/oy."""
     paths = [os.path.join(ASSETS, n + '.png') for n in names]
-    pxs = []
-    for p in paths:
-        img = bpy.data.images.load(p)
-        W, H = img.size
-        pxs.append(np.array(img.pixels[:], dtype=np.float32).reshape(H, W, 4)[::-1])  # top row first
-        bpy.data.images.remove(img)
-    a = np.max([p[:, :, 3] for p in pxs], axis=0) > cut / 255
-    rows, cols = np.nonzero(a.sum(1) >= 3)[0], np.nonzero(a.sum(0) >= 3)[0]  # ignore stray noise specks
-    ys, xs = rows, cols
+    pxs = [load_png(p) for p in paths]
+    H, W = pxs[0].shape[:2]
+    a = np.stack(pxs)[..., 3].max(0) > cut / 255  # np.stack fails loudly if sizes differ
+    ys, xs = np.nonzero(a.sum(1) >= 3)[0], np.nonzero(a.sum(0) >= 3)[0]  # ignore stray noise specks
     x0, x1 = max(0, xs.min() - pad), min(W, xs.max() + 1 + pad)
     y0, y1 = max(0, ys.min() - pad), min(H, ys.max() + 1 + pad)
     ents = []
     for n, p, px in zip(names, paths, pxs):
-        out = bpy.data.images.new(n, int(x1 - x0), int(y1 - y0), alpha=True)
-        out.pixels[:] = px[y0:y1, x0:x1][::-1].ravel()
-        out.filepath_raw, out.file_format = p, 'PNG'
-        out.save()
-        bpy.data.images.remove(out)
-        ent = json.load(open(os.path.join(ASSETS, 'manifest.json')))['images'].get(n, {})
+        save_png(px[y0:y1, x0:x1], p)
+        with open(os.path.join(ASSETS, 'manifest.json')) as f:
+            fcntl.flock(f, fcntl.LOCK_SH)  # manifest() rewrites it under LOCK_EX
+            ent = json.load(f)['images'].get(n, {})
         for k, v in ent.items():
             if isinstance(v, list) and len(v) == 2:
                 ent[k] = [round(v[0] - float(x0), 1), round(v[1] - float(y0), 1)]
@@ -390,6 +430,26 @@ def crop_frames(names, pad=6, cut=8):
         print('sprite', n, ent)
         ents.append(ent)
     return ents
+
+
+def load_png(path):
+    """PNG -> (H, W, 4) float32 array, top row first."""
+    im = bpy.data.images.load(path)
+    W, H = im.size
+    px = np.empty(W * H * 4, np.float32)
+    im.pixels.foreach_get(px)
+    bpy.data.images.remove(im)
+    return px.reshape(H, W, 4)[::-1]
+
+
+def save_png(px, path):
+    """Write an (H, W, 4) float array, top row first, as an RGBA PNG."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    im = bpy.data.images.new('png', px.shape[1], px.shape[0], alpha=True)
+    im.pixels.foreach_set(np.ascontiguousarray(px[::-1], np.float32).ravel())
+    im.filepath_raw, im.file_format = path, 'PNG'
+    im.save()
+    bpy.data.images.remove(im)
 
 
 def manifest(name, ent):

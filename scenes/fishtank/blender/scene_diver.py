@@ -2,11 +2,11 @@
 import math, os, random, sys
 import bpy
 import numpy as np
-from mathutils import Vector, Euler, noise
+from mathutils import Vector, noise
 sys.path.insert(0, os.path.dirname(__file__))
 from common import *
 
-scenery(int(os.environ.get('SAMPLES', 256)))
+scenery()
 seed(11)
 ground(14)
 c = bpy.data.objects['contact']  # he is taller than the default contact light: lift it over his head
@@ -56,11 +56,9 @@ def canvas(name):
                                                                                             'To Min': 1.0, 'To Max': 0.0})
     base = ramp(m, (nz, 'Fac'), [(0.3, (0.3, 0.19, 0.08)), (0.72, (0.6, 0.42, 0.2))])
     col = N(m, 'Mix', _data_type='RGBA', Factor=(dirt, 'Result'), A=(base, 'Color'), B=(0.13, 0.12, 0.07, 1))
-    ao = N(m, 'AmbientOcclusion', Distance=0.12, _samples=8)
-    g = N(m, 'MapRange', Value=(ao, 'AO'), **{'To Min': 0.3})
-    col = N(m, 'Mix', _data_type='RGBA', _blend_type='MULTIPLY', Factor=1.0, A=(col, 'Result'), B=(g, 'Result'))
+    col = ao_grime(m, (col, 'Result'), 0.12, 0.3)
     b = N(m, 'Bump', Strength=0.18, Distance=0.004, Height=M(m, 'ADD', (w1, 'Fac'), (w2, 'Fac')))
-    N(m, 'OutputMaterial', Surface=N(m, 'BsdfPrincipled', **{'Base Color': (col, 'Result'), 'Roughness': 0.85,
+    N(m, 'OutputMaterial', Surface=N(m, 'BsdfPrincipled', **{'Base Color': col, 'Roughness': 0.85,
                                                              'Sheen Weight': 0.15, 'Normal': b}))
     return m
 
@@ -140,13 +138,13 @@ def nubs(n_, r, h, mat, places, verts=6):
         o = bpy.data.objects.new(n_, me)
         bpy.context.scene.collection.objects.link(o)
         o.location = loc
-        o.rotation_euler = Vector((0, 0, 1)).rotation_difference(Vector(nrm)).to_euler()
+        o.rotation_euler = aim(nrm)
         o.rotation_euler.rotate_axis('Z', random.uniform(0, 1))
         o.parent = root
         parts.append(o)
 
 
-def sph(name, r, loc, scale=(1, 1, 1), mat=None, rot=(0, 0, 0), sub=3):
+def sph(name, r, loc, scale=(1, 1, 1), mat=None, rot=(0, 0, 0)):
     bpy.ops.mesh.primitive_uv_sphere_add(segments=32, ring_count=16, radius=r, location=loc, rotation=rot)
     o = bpy.context.object
     o.scale = scale
@@ -202,7 +200,7 @@ tube('sheath', [(0.5, -0.25, 1.62), (0.52, -0.28, 1.35), (0.53, -0.3, 1.12)], [0
 tube('handle', [(0.5, -0.25, 1.62), (0.5, -0.25, 1.82)], [0.04, 0.035], copper)
 
 # --- corselet (breastplate) with brail straps and wing nuts, neck ring
-cors = lathe('corselet', [(0.74, 2.72), (0.76, 2.8), (0.72, 2.95), (0.6, 3.08), (0.45, 3.16), (0.38, 3.2)], brass, sy=0.82)
+lathe('corselet', [(0.74, 2.72), (0.76, 2.8), (0.72, 2.95), (0.6, 3.08), (0.45, 3.16), (0.38, 3.2)], brass, sy=0.82)
 lathe('gasket', [(0.72, 2.66), (0.77, 2.68), (0.77, 2.76), (0.72, 2.78)], rubber, sy=0.82)
 bolts = []
 for i in range(14):
@@ -238,7 +236,7 @@ def on_helm(yaw, pitch, out=0.0):
 
 def port(yaw, pitch, r, bars):
     loc, d = on_helm(yaw, pitch, 0.02)
-    rot = Vector((0, 0, 1)).rotation_difference(d).to_euler()
+    rot = aim(d)
     bpy.ops.mesh.primitive_torus_add(major_radius=r, minor_radius=0.04, location=loc, rotation=rot)
     rim = bpy.context.object
     rim.data.shade_smooth()
@@ -255,7 +253,6 @@ def port(yaw, pitch, r, bars):
         x, y = mw @ Vector((1, 0, 0)), mw @ Vector((0, 1, 0))
         p0, p1 = a + x * off - y * r * 0.95, a + x * off + y * r * 0.95
         tube('bar', [p0, (p0 + p1) / 2 + d * 0.02, p1], [0.016] * 3, brass)
-    return loc, d
 
 
 # riveted band where the bonnet meets the breech ring
@@ -269,11 +266,11 @@ port(-78, 4, 0.14, 3)
 port(78, 4, 0.14, 3)
 port(0, 52, 0.09, 0)
 # hinged faceplate: a wing nut at the front port
-loc, d = on_helm(0, -26, 0.03)
+loc = on_helm(0, -26, 0.03)[0]
 sph('facewing', 0.06, loc, (1.2, 0.5, 0.5), brass)
 # exhaust valve on the right side, slightly back: the bubbles leave here
 vl, vd = on_helm(105, 18, 0.0)
-vrot = Vector((0, 0, 1)).rotation_difference(vd).to_euler()
+vrot = aim(vd)
 bpy.ops.mesh.primitive_cylinder_add(vertices=24, radius=0.06, depth=0.2, location=vl + vd * 0.08, rotation=vrot)
 link(bpy.context.object, brass)
 sph('valvecap', 0.075, vl + vd * 0.19, (1, 1, 0.6), brass, rot=vrot)
@@ -289,7 +286,7 @@ for pts, rad in (([(-0.66, 0.0, 2.62), (-0.76, -0.02, 2.3), (-0.78, -0.08, 2.0),
     wrinkle(arm, 0.02, 22)
     w = Vector(pts[-1])
     dirn = (w - Vector(pts[-2])).normalized()
-    rot = Vector((0, 0, 1)).rotation_difference(dirn).to_euler()
+    rot = aim(dirn)
     bpy.ops.mesh.primitive_torus_add(major_radius=0.13, minor_radius=0.045, location=w, rotation=rot)
     link(bpy.context.object, rubber)
     hand = w + dirn * 0.15

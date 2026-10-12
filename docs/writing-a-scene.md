@@ -46,8 +46,7 @@ on each new notification and dims at night or in dark mode. Open it next to this
 3. **Turn counters into events.** It keeps the last `world.notifications`; when the number changes
    it sets `pop = 1`, which then decays and drives `set_scale`.
 4. **React to time and theme.** `hour` and `dark` pick the opacity.
-5. **`destroy` is empty**, because everything it made lives under `ctx.root`, which the host
-   destroys.
+5. **No `destroy`**: everything it made lives under `ctx.root`, which the host destroys.
 
 To register a scene, add one line to `SCENES` in `scenes/index.js` (the first entry is the default):
 
@@ -57,7 +56,8 @@ dot: {name: 'Dot (demo)', load: () => import('./dot/scene.js')},
 
 ## Rules the host enforces
 
-- A `tick` that throws, or keeps running over two frames, gets the scene destroyed and logged once.
+- A `tick` that throws, or is slower than two frames for about 30 ticks in a row, gets the scene
+  destroyed and logged once.
   Budget: all ticks together under 1 ms on average.
 - No `new` actors per tick: build pools in `create` and reuse them.
 - Move with `set_translation`; put opacity on the actor that holds the texture, not its parent.

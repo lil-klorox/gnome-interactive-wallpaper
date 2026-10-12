@@ -2,11 +2,11 @@
 # from the same camera with the body as holdout, so scene.js can stack them pixel-exact.
 import math, os, random, sys
 import bpy
-from mathutils import Vector, Matrix, Euler
+from mathutils import Vector, Euler
 sys.path.insert(0, os.path.dirname(__file__))
 from common import *
 
-scenery(int(os.environ.get('SAMPLES', 256)))
+scenery()
 seed(7)
 floor = ground(12)
 W, D, H = 1.0, 0.6, 0.82   # half width, half depth, body height
@@ -29,15 +29,13 @@ def wood(name, c1, c2, moss=0.0):
     col = ramp(m, g, [(0.25, c1), (0.75, c2)])
     tone = ramp(m, (rnd, 'Random'), [(0.0, (0.75, 0.75, 0.75)), (1.0, (1.15, 1.1, 1.0))])
     c = N(m, 'Mix', _data_type='RGBA', _blend_type='MULTIPLY', Factor=1.0, A=(col, 'Color'), B=(tone, 'Color'))
-    ao = N(m, 'AmbientOcclusion', Distance=0.12, _samples=8)
-    gr = N(m, 'MapRange', Value=(ao, 'AO'), **{'To Min': 0.4})
-    c = N(m, 'Mix', _data_type='RGBA', _blend_type='MULTIPLY', Factor=1.0, A=(c, 'Result'), B=(gr, 'Result'))
+    c = ao_grime(m, (c, 'Result'), 0.12, 0.4)
     geo = N(m, 'NewGeometry')
     pos = N(m, 'SeparateXYZ', Vector=(geo, 'Position'))
     rn = N(m, 'TexNoise', Vector=(geo, 'Position'), Scale=7.0, Detail=8.0)
     rot = N(m, 'MapRange', Value=M(m, 'ADD', (pos, 'Z'), M(m, 'MULTIPLY', (rn, 'Fac'), 0.5)),
             **{'From Min': 0.05, 'From Max': 0.3, 'To Min': 0.6, 'To Max': 0.0})
-    c = N(m, 'Mix', _data_type='RGBA', Factor=(rot, 'Result'), A=(c, 'Result'), B=(0.035, 0.03, 0.015, 1))
+    c = N(m, 'Mix', _data_type='RGBA', Factor=(rot, 'Result'), A=c, B=(0.035, 0.03, 0.015, 1))
     r = (N(m, 'MapRange', Value=(rot, 'Result'), **{'To Min': 0.62, 'To Max': 0.9}), 'Result')
     if moss:
         up = N(m, 'SeparateXYZ', Vector=(geo, 'Normal'))
@@ -90,7 +88,6 @@ for k in range(3):
 box((2 * W, 2 * D, 0.05), (0, 0, 0.025))
 
 # iron: corner straps, two wrap-around bands, top rim band, rivets
-rivet = bpy.data.meshes.new('rivet')
 bpy.ops.mesh.primitive_uv_sphere_add(segments=12, ring_count=6, radius=0.022)
 rv = bpy.context.object
 rv.scale.y = 0.6
@@ -106,7 +103,7 @@ def rivets(p0, p1, n, normal, parent=root, group=body):
         o = bpy.data.objects.new('rv', rivet)
         bpy.context.scene.collection.objects.link(o)
         o.location = p0.lerp(p1, (i + 0.5) / n)
-        o.rotation_euler = Vector((0, 0, 1)).rotation_difference(Vector(normal)).to_euler()
+        o.rotation_euler = aim(normal)
         o.rotation_euler.rotate_axis('Z', jit(3))
         o.parent = parent
         group.append(o)
@@ -293,7 +290,7 @@ for sx in (-0.75, 0.75):  # hinges on the back
 # --- render: body with the lid hidden, then lid frames with the body held out
 OPEN = math.radians(35)
 hinge.rotation_euler.x = -OPEN
-cam = fit(body + lid, margin=0.12)
+fit(body + lid, margin=0.12)
 hinge.rotation_euler.x = 0
 for o in lid:
     o.hide_render = True

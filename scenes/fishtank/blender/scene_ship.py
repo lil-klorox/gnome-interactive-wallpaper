@@ -2,11 +2,11 @@
 # stern cabin, broken masts, torn sail, sagging rigging, barnacles, anchor and chain.
 import math, os, random, sys
 import bpy
-from mathutils import Vector, Matrix
+from mathutils import Vector
 sys.path.insert(0, os.path.dirname(__file__))
 from common import *
 
-scenery(int(os.environ.get('SAMPLES', 256)))
+scenery()
 seed(7)
 R = random.uniform
 HL = 4.0  # half length; bow at +x, stern at -x, port side (camera side) at -y
@@ -128,6 +128,7 @@ for k in range(9):
             V.append(Vector((-HL - 0.02, -w + 2 * w * i / 8, z)))
             tone.append(R(0.4, 1.0) if j == 0 else tone[-9])
             paint.append(0.0)
+    # overwrites the per-vertex tones above, but those R() draws feed the seeded stream: keep them
     tone[base:base + 9] = [tone[base]] * 9
     tone[base + 9:base + 18] = [tone[base]] * 9
     for i in range(8):
@@ -164,23 +165,6 @@ parts.append(deck)
 
 # ---- timbers: ribs (seen through the hole), keel, stem, gunwale caps, railing, masts, rigging ----
 dark = wood('timber', (0.1, 0.055, 0.025), (0.3, 0.17, 0.07), moss=0.3)
-
-
-def curve(name, pts_list, depth, mat, res=0, radii=None):
-    cu = bpy.data.curves.new(name, 'CURVE')
-    cu.dimensions, cu.bevel_depth, cu.bevel_resolution = '3D', depth, res
-    cu.use_fill_caps = True
-    for pts in pts_list:
-        sp = cu.splines.new('POLY')
-        sp.points.add(len(pts) - 1)
-        for i, p in enumerate(pts):
-            sp.points[i].co = (*p, 1)
-            if radii:
-                sp.points[i].radius = radii(i / (len(pts) - 1))
-    o = bpy.data.objects.new(name, cu)
-    bpy.context.scene.collection.objects.link(o)
-    cu.materials.append(mat)
-    return o
 
 
 ribs = [[P(u, t / 12, s, -0.06) for s in (-1, 1) for t in (range(12, -1, -1) if s < 0 else range(13))]
@@ -375,8 +359,8 @@ for k in range(3):
     mod(fr, 'BOOLEAN', object=w, operation='DIFFERENCE')
     mod(fr, 'BEVEL', width=0.01, segments=1)
     wins += [w, fr]
-    for dx, dz, sx, sz in ((0, 0, 0.03, 0.4), (0, 0, 0.32, 0.03)):  # mullions
-        bpy.ops.mesh.primitive_cube_add(size=1, location=(x + dx, yw - 0.025, czb + 0.48 + dz))
+    for sx, sz in ((0.03, 0.4), (0.32, 0.03)):  # mullions
+        bpy.ops.mesh.primitive_cube_add(size=1, location=(x, yw - 0.025, czb + 0.48))
         mu = bpy.context.object
         mu.scale = (sx, 0.02, sz)
         mu.data.materials.append(dark)
@@ -520,7 +504,7 @@ for i in range(len(chain) - 1):
     links.append(l)
 
 hole = ship.matrix_world @ P(HOLE[0], HOLE[1], -1)
-g = ground(12)
+ground(12)
 objs = [o for o in parts + anch + links if o.type in ('MESH', 'CURVE')]
 fit(objs, margin=0.3)
 sprite('ship', {'base': (0, 0, 0), 'hole': tuple(hole)})

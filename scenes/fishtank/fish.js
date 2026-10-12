@@ -7,6 +7,7 @@ import St from 'gi://St';
 import Cairo from 'cairo';
 import { makeBrain, think, PERSONALITY, drowsy, lazy, night } from './brain.js';
 import { makeFish, step } from './steer.js';
+import { pt } from './tank.js';
 
 // n: how many; cruise px/s at full size; burst/coast: wander gait seconds; turn rad/s
 const SPECIES = [
@@ -68,38 +69,45 @@ export class School {
         const failed = [];
         let k = 0;
         for (const sp of SPECIES) {
+            // bug fix: bodies were built outside this try, so one bad sheet killed the whole scene
             let m;
+            const made = [];  // [layer, bodies] per fish
             try {
                 m = this._species(sp.name);
+                for (let i = 0; i < sp.n; i++) {
+                    const layer = sp.school || k++ % 3 ? 1 : 0, bodies = [];
+                    made.push([layer, bodies]);
+                    for (const sh of m.sheets) bodies.push(this._makeBody(sh, m, layer, fishLayers[layer]));
+                }
             } catch (e) {
+                for (const [, bodies] of made) for (const bd of bodies) bd.box.destroy();
                 failed.push(`${sp.name} (${e.message})`);
                 continue;
             }
             const pers = PERSONALITY[sp.name];
-            const hx = b.x + Math.random() * b.w, hy = b.y + b.h * (pers.band[0] + Math.random() * (pers.band[1] - pers.band[0]));
-            for (let i = 0; i < sp.n; i++) {
+            const bandY = () => b.y + b.h * (pers.band[0] + Math.random() * (pers.band[1] - pers.band[0]));
+            const hx = b.x + Math.random() * b.w, hy = sp.school && bandY();
+            for (const [i, [layer, bodies]] of made.entries()) {
                 const id = sp.name + i, rec = this._store[id] = record(old?.[id], now);
-                const layer = sp.school || k++ % 3 ? 1 : 0;
                 const sc = S * (layer ? 1 : FAR.scale) * (0.8 + 0.2 * Math.min(1, (now - rec.born) / DAY / 30));  // grows for a month
                 const s = makeFish({
                     // schools start bunched together, everyone else anywhere in their home band
                     x: sp.school ? hx + Math.random() * 80 : b.x + Math.random() * b.w,
-                    y: sp.school ? hy + Math.random() * 40 : b.y + b.h * (pers.band[0] + Math.random() * (pers.band[1] - pers.band[0])),
+                    y: sp.school ? hy + Math.random() * 40 : bandY(),
                     cruise: sp.cruise * sc * (0.85 + Math.random() * 0.3), pad: m.len * sc * 0.5,
                     school: sp.school, turn: sp.turn, burst: sp.burst, coast: sp.coast,
                 });
                 const brain = makeBrain(pers);
                 brain.fed = rec.fed;
                 const f = { id, m, s, sc, layer, brain, ph: Math.random(), yaw: Math.cos(s.dir) > 0 ? 0 : Math.PI,
-                    puff: 0, look: [0, 0], cur: null, rot: null, mirror: null, tx: 0, ty: 0, it: null, acc: 0 };
-                f.bodies = m.sheets.map(sh => this._makeBody(sh, m, layer, fishLayers[layer]));
+                    puff: 0, look: [0, 0], cur: null, rot: null, mirror: null, tx: NaN, ty: NaN, it: null, acc: 0, bodies };
                 this._fish.push(f);
                 this._mates[layer].push({ f: s, b: brain });
                 this._motion[layer].push(s);
             }
         }
         if (failed.length)
-            console.warn(`fishtank: fish art missing, skipped: ${failed.join(', ')}`);
+            console.warn(`fishtank: fish skipped: ${failed.join(', ')}`);
         this._flakes = [];
         for (let i = 0; i < FLAKES; i++) {
             const a = new St.Widget({ width: 7, height: 5, visible: false, style: 'background-color: #c9772f; border-radius: 3px;' });
@@ -124,15 +132,21 @@ export class School {
     }
 
     // Sheets (main + puffer's puff) and the largest eye radius, so one eye texture fits every frame.
+    // The manifest is untrusted: checked here once, a bad entry drops only this species.
     _species(name) {
         const ctx = this._ctx, e = ctx.images[name];
-        if (!e?.eyes || !e.yaws || typeof e.iris !== 'string') throw new Error('not in manifest');
-        const sheets = [ctx.sheet(name)];
-        if (e.puff && ctx.images[e.puff]?.eyes) sheets.push(ctx.sheet(e.puff));
-        if (sheets.some(sh => sh.eyes.length !== sh.n)) throw new Error('eyes/frames mismatch');
+        if (!e) throw new Error('not in manifest');
+        const rows = e.yaws?.length, eye = v => Array.isArray(v) && v.length === 4 && v.every(Number.isFinite);
+        if (!rows || !Number.isFinite(e.len) || e.len <= 0 || typeof e.iris !== 'string' || !/^#[0-9a-f]{6}$/i.test(e.iris))
+            throw new Error('bad manifest entry');
+        const names = e.puff && ctx.images[e.puff]?.eyes ? [name, e.puff] : [name], sheets = names.map(n => ctx.images[n]);
+        // frame i = row * cols + col must exist for every yaw row, with eyes for each frame
+        if (!sheets.every(sh => pt(sh.anchor) && sh.n === rows * sh.cols && sh.eyes?.length === sh.n &&
+            sh.eyes.every(fr => Array.isArray(fr) && fr.every(eye))))
+            throw new Error('bad manifest entry');
         let rmax = 1;
         for (const sh of sheets) for (const fr of sh.eyes) for (const v of fr) rmax = Math.max(rmax, v[2]);
-        return { sheets, rows: e.yaws.length, rmax, iris: e.iris, len: e.len };
+        return { sheets: names.map(n => ctx.sheet(n)), rows, rmax, iris: e.iris, len: e.len };
     }
 
     // One sprite: the sheet's clip box (scaled/rotated/mirrored about the anchor), eyes on top.
@@ -256,6 +270,7 @@ export class School {
             box.show();
             f.cur = bd;
             f.rot = f.mirror = null;
+            f.tx = f.ty = NaN;  // bug fix: new box kept translation (0,0) until the fish moved
         }
         const row = Math.round(side / (Math.PI / 2) * (m.rows - 1));
         const col = bd === f.bodies[0] ? Math.floor(f.ph * sh.cols) % sh.cols : Math.round(f.puff * (sh.cols - 1));
@@ -301,6 +316,5 @@ export class School {
         // bug fix: saving unconditionally let an unfed monitor's stale copy overwrite another
         // monitor's feeding on disable; only a school with unsaved changes writes
         if (this._fish.reduce((n, f) => n + f.brain.fed, 0) !== this._fedSum) this._save();
-        this._fish = [];
     }
 }

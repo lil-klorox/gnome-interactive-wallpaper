@@ -7,7 +7,7 @@ from mathutils import Vector
 sys.path.insert(0, os.path.dirname(__file__))
 from common import *
 
-scenery(int(os.environ.get('SAMPLES', 256)))
+scenery()
 seed(11)
 R = random.random
 TAU = math.tau
@@ -17,8 +17,7 @@ SINK = 0.15     # everything starts this far under the sand
 # ---- materials ----
 
 def blockmat(name, c1, c2, moss=0.5, low=0.0, scale=2.5, rough=0.85, bump=0.8, wear=0.45):
-    """Per-block tone from the 'blk' attribute + noise, AO grime, moss on tops, algae/dirt low down,
-    green drip streaks, pitted bump."""
+    """Stone blocks: per-block tone ('blk' attribute), drips, worn edges, grime, moss, pitted bump."""
     m = new_mat(name)
     co = N(m, 'TexCoord')
     at = N(m, 'Attribute', _attribute_name='blk')
@@ -43,9 +42,7 @@ def blockmat(name, c1, c2, moss=0.5, low=0.0, scale=2.5, rough=0.85, bump=0.8, w
         lz = N(m, 'MapRange', Value=M(m, 'MULTIPLY_ADD', (nz, 'Fac'), 0.5, (pos, 'Z')),
                **{'From Min': 0.1, 'From Max': 0.7, 'To Min': low, 'To Max': 0.0})
         col = (N(m, 'Mix', _data_type='RGBA', Factor=(lz, 'Result'), A=col, B=(0.12, 0.15, 0.05, 1)), 'Result')
-    ao = N(m, 'AmbientOcclusion', Distance=0.12, _samples=8)
-    g = N(m, 'MapRange', Value=(ao, 'AO'), **{'To Min': 0.3})
-    col = (N(m, 'Mix', _data_type='RGBA', _blend_type='MULTIPLY', Factor=1.0, A=col, B=(g, 'Result')), 'Result')
+    col = ao_grime(m, col, 0.12, 0.3)
     pit = N(m, 'TexVoronoi', Vector=(co, 'Object'), Scale=scale * 6, _feature='SMOOTH_F1')
     height = M(m, 'MULTIPLY_ADD', (fine, 'Fac'), 0.5, M(m, 'MULTIPLY_ADD', (pit, 'Distance'), 0.5, (nz, 'Fac')))
     r = rough
@@ -88,11 +85,9 @@ def wood(name, c1, c2):
     nz = N(m, 'TexNoise', Vector=(co, 'Object'), Scale=5.0, Detail=6.0)
     col = ramp(m, M(m, 'MULTIPLY_ADD', (wv, 'Fac'), 0.6, M(m, 'MULTIPLY', (nz, 'Fac'), 0.4)),
                [(0.2, c1), (0.8, c2)])
-    ao = N(m, 'AmbientOcclusion', Distance=0.08, _samples=8)
-    g = N(m, 'MapRange', Value=(ao, 'AO'), **{'To Min': 0.35})
-    c = N(m, 'Mix', _data_type='RGBA', _blend_type='MULTIPLY', Factor=1.0, A=(col, 'Color'), B=(g, 'Result'))
+    c = ao_grime(m, (col, 'Color'), 0.08, 0.35)
     b = N(m, 'Bump', Strength=0.5, Distance=0.02, Height=(wv, 'Fac'))
-    N(m, 'OutputMaterial', Surface=N(m, 'BsdfPrincipled', **{'Base Color': (c, 'Result'), 'Roughness': 0.8, 'Normal': b}))
+    N(m, 'OutputMaterial', Surface=N(m, 'BsdfPrincipled', **{'Base Color': c, 'Roughness': 0.8, 'Normal': b}))
     return m
 
 
@@ -286,7 +281,7 @@ def arch_stones(B, cx, cy, r, theta, zb, w, h, n=7, d=0.14):
     B.block(fn, nu=3, jit=0.006, chip=0.08)
 
 
-def arch_plug(name, w, h, depth, mat, loc, rot_z=0.0, inset=0.1):
+def arch_plug(name, w, h, depth, mat, loc, rot_z=0.0):
     """Dark arched prism set into a wall: the hole's inside."""
     pts = [(-w / 2, 0), (w / 2, 0)]
     zs = h - w / 2
@@ -317,7 +312,6 @@ B = Batch()
 parts = []
 for i, (cx, cy, r, top) in enumerate(TOWERS):
     front = -math.pi / 2 + (0.12 if i == 0 else -0.1)
-    holes = []
     if i == 0:
         holes = [(front + 0.15, 1.35, 0.34, 0.66), (front - 0.35, 2.55, 0.3, 0.55)]
     elif i == 1:
@@ -493,11 +487,7 @@ def flag(name, pole_base, pole_h, size, mat, phase, swallow=False):
         for j in range(nv):
             a = i * (nv + 1) + j
             f.append((a, a + nv + 1, a + nv + 2, a + 1))
-    o = mesh(name, v, f, mat)
-    lay = o.data.uv_layers.new()
-    for poly in o.data.polygons:
-        for li in poly.loop_indices:
-            lay.data[li].uv = uv[o.data.loops[li].vertex_index]
+    o = mesh(name, v, f, mat, uv=uv)
     mod(o, 'SOLIDIFY', thickness=0.012)
     parts.append(o)
 
@@ -526,8 +516,7 @@ def starfish(t, th0, z0, size, spin):
             rr = size * prof * tt
             x, z = rr * math.cos(a), rr * math.sin(a)
             dome = size * 0.22 * (1 - tt ** 2) * (0.6 + 0.4 * prof) + 0.01
-            cx, cy, r, _ = TOWERS[t]
-            th = th0 + x / r
+            th = th0 + x / TOWERS[t][2]
             v.append(tuple(on_tower(t, th, z0 + z, dome)))
     for k in range(K):
         for j in range(A):
@@ -583,8 +572,7 @@ def tuft(base, n, hmax):
 
 
 for t, th in ((0, -2.0), (0, -1.0), (1, -1.3), (1, -2.4)):
-    cx, cy, r, top = TOWERS[t]
-    tuft(on_tower(t, th, top + 0.5, 0.05), 7, 0.28)
+    tuft(on_tower(t, th, TOWERS[t][3] + 0.5, 0.05), 7, 0.28)
 tuft(Vector((0.55, WALL[2] + 0.05, WALL[3] + 0.48)), 6, 0.22)
 tuft(Vector((-0.6, -0.35, -0.02)), 12, 0.35)
 tuft(Vector((1.0, -0.3, -0.02)), 9, 0.25)

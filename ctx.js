@@ -63,12 +63,38 @@ function store(id) {
     const dir = GLib.build_filenamev([GLib.get_user_data_dir(), 'interactive-wallpaper']);
     const file = Gio.File.new_for_path(GLib.build_filenamev([dir, `${id}.json`]));
     let data = null;  // one in-memory copy shared by every monitor; disk is read once
+    let busy = false, next = null;
+    // One write in flight: two overlapping async replaces could land out of order (older save last).
+    const save = bytes => {
+        if (busy) {
+            next = bytes;
+            return;
+        }
+        busy = true;
+        GLib.mkdir_with_parents(dir, 0o700);
+        // No cancellable: a save from destroy() during disable() must still land.
+        file.replace_contents_bytes_async(new GLib.Bytes(bytes), null, false,
+            Gio.FileCreateFlags.REPLACE_DESTINATION, null, (f, r) => {
+                try {
+                    f.replace_contents_finish(r);
+                } catch {
+                    warn(`${id} store save failed`);
+                }
+                busy = false;
+                if (next) {
+                    const b = next;
+                    next = null;
+                    save(b);
+                }
+            });
+    };
     return {
         get() {
             if (data)
                 return data;
             try {
-                const v = JSON.parse(new TextDecoder().decode(file.load_contents(null)[1]));
+                const raw = file.load_contents(null)[1];
+                const v = raw.length <= STORE_MAX ? JSON.parse(new TextDecoder().decode(raw)) : warn(`${id} store over 64 KB, ignored`);
                 data = v && typeof v === 'object' && !Array.isArray(v) ? v : {};
             } catch {
                 data = {};
@@ -76,22 +102,13 @@ function store(id) {
             return data;
         },
         set(obj) {
-            data = obj;
             const bytes = new TextEncoder().encode(JSON.stringify(obj));
             if (bytes.length > STORE_MAX) {
                 warn(`${id} store over 64 KB, not saved`);
                 return;
             }
-            GLib.mkdir_with_parents(dir, 0o700);
-            // No cancellable: a save from destroy() during disable() must still land.
-            file.replace_contents_bytes_async(new GLib.Bytes(bytes), null, false,
-                Gio.FileCreateFlags.REPLACE_DESTINATION, null, (f, r) => {
-                    try {
-                        f.replace_contents_finish(r);
-                    } catch {
-                        warn(`${id} store save failed`);
-                    }
-                });
+            data = obj;
+            save(bytes);
         },
     };
 }
@@ -129,5 +146,6 @@ export function makeCtx(sc, cache, cancel, root, w, h, world) {
             },
         };
     };
+    // ponytail: store is per scene load, so a quick off/on can overlap the old save with the new read; share by id if that bites.
     return Object.freeze({root, w, h, ref: sc.man.ref, images: sc.man.images, world, image, sheet, store: (sc.store ??= store(sc.id))});
 }

@@ -1,8 +1,9 @@
 // Pure texture math (no gi): budget scale, decoded sizes, sprite-sheet frames. Checked by check.js.
 export const BUDGET = 65e6;
 
-const pos = v => Number.isFinite(v) && v > 0;
-const int = v => Number.isInteger(v) && v > 0;
+// Upper caps keep a bad manifest from sizing huge textures/loops.
+const pos = v => Number.isFinite(v) && v > 0 && v <= 16384;
+const int = (v, max = 16384) => Number.isInteger(v) && v > 0 && v <= max;
 
 // Trust boundary for a scene's manifest.json: bad entries are dropped (logged once), the rest load.
 export function parseManifest(text) {
@@ -13,7 +14,7 @@ export function parseManifest(text) {
     for (const [name, e] of Object.entries(m.images)) {
         const n = e?.n ?? 1, cols = e?.cols ?? n;
         const px = e?.px ?? [Math.ceil(e?.w * cols), Math.ceil(e?.h * Math.ceil(n / cols))];
-        if (/^[\w-]+$/.test(name) && pos(e?.w) && pos(e?.h) && int(n) && int(cols) && cols <= n &&
+        if (/^[\w-]+$/.test(name) && pos(e?.w) && pos(e?.h) && int(n, 4096) && int(cols) && cols <= n &&
             Array.isArray(px) && int(px[0]) && int(px[1]))
             images[name] = Object.freeze({...e, n, cols, px});
         else

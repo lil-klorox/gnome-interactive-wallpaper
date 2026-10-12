@@ -34,15 +34,15 @@ export default class InteractiveWallpaper extends Extension {
         this._iface = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
         const dark = () => (this._raw.dark = this._iface.get_string('color-scheme') === 'prefer-dark');
         dark();
-        const lm = Main.layoutManager, update = () => this._update();
+        const lm = Main.layoutManager, refresh = () => this._update();
         this._on(this._settings, 'changed::scene', () => this._load());
         this._on(this._iface, 'changed::color-scheme', dark);
         // ponytail: any of these re-checks every monitor and window; cheap, so no per-window tracking.
         this._on(lm, 'monitors-changed', () => this._rebuild());
         this._on(lm, 'startup-complete', () => this._load());
-        this._on(global.display, 'restacked', update);
-        this._on(global.display, 'in-fullscreen-changed', update);
-        this._on(global.display, 'window-entered-monitor', update);
+        this._on(global.display, 'restacked', refresh);
+        this._on(global.display, 'in-fullscreen-changed', refresh);
+        this._on(global.display, 'window-entered-monitor', refresh);
         this._on(global.display, 'grab-op-begin', (_d, w) => {
             this._grab = w;
             this._raw.grabbing = w?.get_stable_sequence() ?? null;
@@ -51,12 +51,12 @@ export default class InteractiveWallpaper extends Extension {
             this._grab = this._raw.grabbing = null;
             this._update();
         });
-        this._on(global.window_manager, 'size-changed', update);
-        this._on(global.window_manager, 'minimize', update);
-        this._on(global.window_manager, 'unminimize', update);
-        this._on(global.workspace_manager, 'active-workspace-changed', update);
-        this._on(Main.overview, 'showing', update);
-        this._on(Main.overview, 'hidden', update);
+        this._on(global.window_manager, 'size-changed', refresh);
+        this._on(global.window_manager, 'minimize', refresh);
+        this._on(global.window_manager, 'unminimize', refresh);
+        this._on(global.workspace_manager, 'active-workspace-changed', refresh);
+        this._on(Main.overview, 'showing', refresh);
+        this._on(Main.overview, 'hidden', refresh);
         // Past the user's blank delay nobody can see the tank: pause, and wake on the first input.
         // Idle watches (unlike get_idletime) respect apps holding the screen awake, e.g. a video.
         this._session = new Gio.Settings({schema_id: 'org.gnome.desktop.session'});
@@ -135,14 +135,17 @@ export default class InteractiveWallpaper extends Extension {
         if (!sc)
             return;
         const mons = Main.layoutManager.monitors;
-        const k = scaleFor(Math.max(...mons.map(m => m.height * (Meta.is_wayland_compositor?.() === false ? 1 : m.geometry_scale ?? 1))), sc.man.ref, bytesOf(sc.man.images, 1));
+        // X11 monitor geometry is already physical pixels; the optional call is for shells without X11.
+        const x11 = Meta.is_wayland_compositor?.() === false;
+        const physH = Math.max(...mons.map(m => m.height * (x11 ? 1 : m.geometry_scale ?? 1)));
+        const k = scaleFor(physH, sc.man.ref, bytesOf(sc.man.images, 1));
         if (k !== sc.k) {  // textures are decoded at k, so a new k needs fresh ones
             sc.k = this.stats.k = k;
             this.stats.bytes = bytesOf(sc.man.images, k);
             this._cache.clear();
             console.log(`interactive-wallpaper: ${sc.id} textures ${(this.stats.bytes / 1e6).toFixed(1)} MB at k=${k.toFixed(3)}`);
         }
-        bgManagers().forEach((mgr, i) => this._build(mgr, mons[i], i));
+        bgManagers().forEach((mgr, i) => mons[i] && this._build(mgr, mons[i], i));  // lengths can differ mid-hotplug
         this._update();
     }
 
@@ -152,23 +155,22 @@ export default class InteractiveWallpaper extends Extension {
         const root = new Clutter.Actor({width: mon.width, height: mon.height});
         const t = {root, mon, world: makeWorld(), scene: null, slow: 0, paused: false, dead: false};
         this._tanks[i] = t;
-        // Fires on disable, on rebuild, on the watchdog, and when the shell destroys the bg actor under us.
+        // Also fires when the shell destroys the bg actor under us.
         root.connect('destroy', () => {
-            mgr.disconnect(t.mgrId);
             t.dead = true;
             t.root = null;
             try {
-                t.scene?.destroy();
+                t.scene?.destroy?.();
             } catch (e) {
                 logError(e, `interactive-wallpaper: ${sc.id} teardown`);
             }
         });
         // Wallpaper changed: shell swaps in a new bg actor, the old one fades out and dies.
-        t.mgrId = mgr.connect('changed', () => {
+        mgr.connectObject('changed', () => {
             root.destroy();
             this._build(mgr, mon, i);
             this._update();
-        });
+        }, root);  // disconnected when root is destroyed
         mgr.backgroundActor.add_child(root);
         try {
             t.scene = sc.create(makeCtx(sc, this._cache, this._cancel, root, mon.width, mon.height, t.world));
@@ -177,12 +179,11 @@ export default class InteractiveWallpaper extends Extension {
                 console.warn(`interactive-wallpaper: ${sc.id} built ${this.stats.actors} actors`);
         } catch (e) {
             logError(e, `interactive-wallpaper: ${sc.id} build`);
-            t.dead = true;
+            root.destroy();  // don't leave a half-built scene painted
         }
     }
 
-    // "Bare" = the topmost reactive thing under the cursor is the desktop. Polled, not event-driven:
-    // motion events never reach the background when a desktop-icons or blur extension sits above it.
+    // "Bare" = desktop is topmost under the cursor. Polled: a desktop-icons/blur extension eats motion events.
     _bare(x, y) {
         if (Main.overview.visible)
             return false;
@@ -190,7 +191,7 @@ export default class InteractiveWallpaper extends Extension {
         let w = a;
         while (w && !(w instanceof Meta.WindowActor))
             w = w.get_parent();
-        return !!a && (a === global.stage || backgroundGroup().contains(a) ||
+        return !!a && (a === global.stage || backgroundGroup()?.contains(a) ||
             w?.meta_window?.get_window_type() === Meta.WindowType.DESKTOP);
     }
 

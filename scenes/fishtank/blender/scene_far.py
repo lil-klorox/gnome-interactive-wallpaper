@@ -9,7 +9,6 @@ from common import *
 
 T = math.radians(TILT)
 FRONT = -1.0  # floor front edge (y) = bottom of every plate
-FLOORS = []
 
 
 def periodic(x, L, rnd, terms=48, rough=1.15):
@@ -39,39 +38,22 @@ def ridge(name, L, y0, depth, hmax, sd, mat, nx=720, ny=36):
         for i in range(nx - 1):
             a = j * nx + i
             faces.append((a, a + 1, a + nx + 1, a + nx))
-    o = mesh(name, verts, faces, mat)
-    wrap(o, L)
-    return o
-
-
-def wrap(o, L):
-    for dx in (-L, L):
-        c = o.copy()
-        c.location.x += dx
-        bpy.context.scene.collection.objects.link(c)
+    wrap(mesh(name, verts, faces, mat), L)
 
 
 def floor(L, depth, mat):
-    """Floor strip that fades in from the front and out again by `depth`."""
-    FLOORS.append((mat, depth))
-    o = mesh('floor', [(-L / 2, FRONT, 0), (L / 2, FRONT, 0), (L / 2, depth, 0), (-L / 2, depth, 0)], [(0, 1, 2, 3)], mat)
-    wrap(o, L)
-    return o
+    """Floor strip that fades out by `depth`; returns (mat, depth) for plate() to fade after fog."""
+    wrap(mesh('floor', [(-L / 2, FRONT, 0), (L / 2, FRONT, 0), (L / 2, depth, 0), (-L / 2, depth, 0)], [(0, 1, 2, 3)], mat), L)
+    return mat, depth
 
 
-def fade_front(m, y0=0.5, y1=3.5, y2=1e9):
+def fade_front(m, y0, y1, y2):
     """Make a material transparent toward the front edge and past depth y2 (after fog, so alpha survives)."""
-    nt = m.node_tree
-    out = next(n for n in nt.nodes if n.type == 'OUTPUT_MATERIAL')
-    surf = out.inputs['Surface'].links[0].from_socket
     y = N(m, 'SeparateXYZ', Vector=(N(m, 'NewGeometry'), 'Position'))
     f = N(m, 'MapRange', Value=(y, 'Y'), **{'From Min': y0, 'From Max': y1}, _interpolation_type='SMOOTHSTEP')
     b = N(m, 'MapRange', Value=(y, 'Y'), **{'From Min': y2 - 3, 'From Max': y2, 'To Min': 1.0, 'To Max': 0.0},
           _interpolation_type='SMOOTHSTEP')
-    mix = N(m, 'MixShader', Fac=M(m, 'MULTIPLY', (f, 'Result'), (b, 'Result')))
-    nt.links.new(N(m, 'BsdfTransparent').outputs[0], mix.inputs[1])
-    nt.links.new(surf, mix.inputs[2])
-    nt.links.new(mix.outputs[0], out.inputs['Surface'])
+    mix_surface(m, M(m, 'MULTIPLY', (f, 'Result'), (b, 'Result')), N(m, 'BsdfTransparent'), first=True)
 
 
 def branches(name, root, rnd, mat, depth=4, length=1.0, radius=0.06, spread=0.6, planar=False, up=1.0):
@@ -122,7 +104,7 @@ def ribbon(name, root, rnd, mat, height, width=0.12, sway=0.5):
     return o
 
 
-def brain(rnd, r, loc, mat):
+def brain(r, loc, mat):
     bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=6, radius=r, location=loc)
     o = bpy.context.object
     o.scale.z = 0.65
@@ -156,7 +138,7 @@ def plate(name, L, haze, far, yb, build, sd, res):
     used so the haze colour matches the backdrop gradient behind it."""
     scenery(160)
     rnd = np.random.default_rng(sd)
-    objs = build(L, rnd)
+    fm, fd = build(L, rnd)
     bpy.context.view_layer.update()
     top = 0
     for o in bpy.context.scene.objects:
@@ -168,9 +150,7 @@ def plate(name, L, haze, far, yb, build, sd, res):
     v0 = FRONT * math.sin(T)
     a = PPU / 1440
     fog(haze, far, vmap=(a, (1440 - yb) / 1440 - v0 * a))
-    while FLOORS:
-        m, d = FLOORS.pop()
-        fade_front(m, FRONT - 2, FRONT - 1, d)  # opaque to the bottom edge: nearer layers cover it
+    fade_front(fm, FRONT - 2, FRONT - 1, fd)  # opaque to the bottom edge: nearer layers cover it
     top += 0.1
     hpx = round((top - v0) * PPU)
     camera(L, round(L * PPU * res), round(hpx * res), tilt=TILT, z=(top + v0) / 2 / math.cos(T))  # hazy: low res, scaled up
@@ -181,17 +161,17 @@ def plate(name, L, haze, far, yb, build, sd, res):
 def far0(L, rnd):
     rk2 = pbr('ridge2', (0.05, 0.06, 0.06), (0.16, 0.15, 0.13), rough=0.9, scale=0.4, bump=0.5, moss=0.25,
               cracks=0.3, strata=0.4, wrap=L)
-    floor(L, 16, pbr('floor0', (0.1, 0.09, 0.07), (0.17, 0.14, 0.1), scale=0.5, wrap=L))
+    fl = floor(L, 16, pbr('floor0', (0.1, 0.09, 0.07), (0.17, 0.14, 0.1), scale=0.5, wrap=L))
     ridge('back', L, 9, 6, 4.4, 1, rk2)
     ridge('front', L, 4, 4, 1.8, 2, rk2)
-    return []
+    return fl
 
 
 def far1(L, rnd):
     rkm = stone('spire', moss=0.5, scale=0.9)
     fan = pbr('fan', (0.35, 0.08, 0.12), (0.55, 0.2, 0.18), rough=0.7, scale=6, sss=0.2)
     kelp = pbr('kelp', (0.08, 0.12, 0.02), (0.2, 0.22, 0.05), rough=0.5, scale=2, sss=0.4)
-    floor(L, 11, pbr('floor1', (0.12, 0.1, 0.08), (0.2, 0.16, 0.11), scale=0.7, wrap=L))
+    fl = floor(L, 11, pbr('floor1', (0.12, 0.1, 0.08), (0.2, 0.16, 0.11), scale=0.7, wrap=L))
     ridge('low', L, 5, 4, 1.6, 3, pbr('ridge1', (0.05, 0.06, 0.06), (0.15, 0.14, 0.12), rough=0.9, scale=0.6,
                                          bump=0.5, moss=0.4, strata=0.4, wrap=L))
     for i in range(6):  # spires: stacked rocks
@@ -212,7 +192,7 @@ def far1(L, rnd):
         for k in range(rnd.integers(3, 7)):
             wrap(ribbon('kelp', (x + rnd.uniform(-0.3, 0.3), y + rnd.uniform(-0.2, 0.2), -0.1), rnd, kelp,
                         rnd.uniform(2.5, 5.2), 0.14), L)
-    return []
+    return fl
 
 
 def far2(L, rnd):
@@ -221,7 +201,7 @@ def far2(L, rnd):
             ((0.25, 0.12, 0.45), (0.45, 0.3, 0.65)), ((0.5, 0.42, 0.25), (0.7, 0.6, 0.4))]
     mats = [pbr(f'coral{i}', a, b, rough=0.75, scale=8, bump=0.6, sss=0.25, vor=0.3) for i, (a, b) in enumerate(cols)]
     grass = pbr('grass', (0.06, 0.13, 0.03), (0.18, 0.25, 0.06), rough=0.5, scale=3, sss=0.4)
-    floor(L, 7, pbr('floor2', (0.14, 0.12, 0.09), (0.24, 0.19, 0.13), scale=1.0, wrap=L))
+    fl = floor(L, 7, pbr('floor2', (0.14, 0.12, 0.09), (0.24, 0.19, 0.13), scale=1.0, wrap=L))
     for i in range(10):  # reef mounds: rock clusters dressed with coral
         cx, cy = (i + rnd.uniform(0.15, 0.85)) * L / 10 - L / 2, rnd.uniform(0.8, 2.5)
         for k in range(rnd.integers(3, 6)):
@@ -234,7 +214,7 @@ def far2(L, rnd):
             m = mats[rnd.integers(0, len(mats))]
             px, py = cx + rnd.uniform(-1.2, 1.2), cy - rnd.uniform(0.3, 0.8)
             if kind == 0:
-                wrap(brain(rnd, rnd.uniform(0.6, 1.0), (px, py, 0.2), m), L)
+                wrap(brain(rnd.uniform(0.6, 1.0), (px, py, 0.2), m), L)
             elif kind == 1:
                 for o in sponges(rnd, (px, py, 0), m, int(rnd.integers(4, 7)), 2.0):
                     wrap(o, L)
@@ -247,7 +227,7 @@ def far2(L, rnd):
         for k in range(rnd.integers(6, 14)):
             wrap(ribbon('grass', (x + rnd.uniform(-0.35, 0.35), y + rnd.uniform(-0.2, 0.2), -0.05), rnd, grass,
                         rnd.uniform(0.8, 2.2), 0.07, 0.35), L)
-    return []
+    return fl
 
 
 plate('far0', 36, 0.74, 0.2, 1185, far0, 10, 0.35)

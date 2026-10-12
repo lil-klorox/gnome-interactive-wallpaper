@@ -10,7 +10,7 @@ ok(scaleFor(720, 1440, 10e6, 64e6) === 0.5, 'k halves with the screen');
 const big = {a: {w: 4000, h: 4000, n: 1, cols: 1, px: [4000, 4000]}, b: {w: 3000, h: 1000, n: 1, cols: 1, px: [3000, 1000]}};
 ok(bytesOf(big, scaleFor(1440, 1440, bytesOf(big, 1), 64e6)) <= 64e6, 'over-budget art shrinks under budget');
 ok(String(frameOffset({w: 160, h: 96, n: 64, cols: 8}, 9)) === '160,96', 'frame 9 is row 1 col 1');
-const m = parseManifest('{"ref":1440,"images":{"a":{"w":"x"},"b":{"w":1,"h":1},"../c":{"w":1,"h":1},"d":{"w":1,"h":1,"n":4,"cols":5},"e":null}}');
+const m = parseManifest('{"ref":1440,"images":{"a":{"w":"x"},"b":{"w":1,"h":1},"../c":{"w":1,"h":1},"d":{"w":1,"h":1,"n":4,"cols":5},"e":null,"f":{"w":1,"h":1,"n":5000}}}');
 ok(Object.keys(m.images).join() === 'b' && m.images.b.n === 1 && m.images.b.cols === 1, 'bad entries dropped');
 ok(BUDGET === 65e6, 'budget');
 

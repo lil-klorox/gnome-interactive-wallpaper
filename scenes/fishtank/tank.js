@@ -8,14 +8,16 @@ const TAU = Math.PI * 2;
 const SAND = 1150;       // ref row of the sand's back edge
 const DRIFT = 22;        // parallax: how far (ref px) the nearest layer sways with the slow camera bob
 
-// Props on the sand, by screen x fraction and the ref row their base sits on; sorted back to front.
+// Props on the sand, by screen x fraction and the ref row their base sits on (sorted by row at build).
 const PROPS = [
     ['rock_b', 0.30, 1205, 0.9], ['castle', 0.12, 1222, 1], ['rock_c', 0.235, 1250, 0.8], ['ship', 0.43, 1215, 1],
     ['rock_a', 0.53, 1262, 0.9], ['chest', 0.6, 1290, 1], ['bubbler', 0.71, 1268, 1], ['diver', 0.86, 1255, 1],
     ['rock_d', 0.94, 1300, 1], ['rock_a', 0.03, 1335, 0.7],
 ];
-const SPECIES = ['valli', 'valli', 'sword', 'sword', 'jfern', 'cabomba', 'ludwigia', 'anubias', 'anubias'];
+const PLANTS = ['valli', 'valli', 'sword', 'sword', 'jfern', 'cabomba', 'ludwigia', 'anubias', 'anubias'];
 const MIDPLANTS = [0.025, 0.2, 0.265, 0.345, 0.545, 0.67, 0.765, 0.905, 0.985];  // in the gaps between props
+// Manifest points are untrusted: one bad point skips that sprite, not the rest of the scenery.
+export const pt = p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite);
 
 // Ref px are the art's own pixels (manifest ref = screen height it was drawn for).
 export class Tank {
@@ -131,14 +133,14 @@ export class Tank {
     }
 
     _add(parent, name, x, y, props = {}) {
-        const m = this._m[name], img = m && this._img(name);
+        const m = this._m[name], img = this._img(name);
         return img ? this._actor(parent, img, {x, y, width: m.w, height: m.h, ...props}) : null;
     }
 
     // Prop with its manifest 'base' point put at (x, y), scaled k.
     _place(parent, name, x, y, k = 1) {
         const m = this._m[name], b = m?.base;
-        const a = b && this._add(parent, name, x - b[0], y - b[1]);
+        const a = pt(b) && this._add(parent, name, x - b[0], y - b[1]);
         if (a) {
             a.set_pivot_point(b[0] / m.w, b[1] / m.h);
             a.set_scale(k, k);
@@ -149,7 +151,7 @@ export class Tank {
     // Horizontally repeating strip: side-by-side copies sharing one texture (content repeat tiles at
     // the decoded size, not the ref size); vx = drift speed in ref px/s, which needs a moving holder.
     _tile(parent, name, x, y, width, vx) {
-        const m = this._m[name], img = m && this._img(name);
+        const m = this._m[name], img = this._img(name);
         if (!img) return null;
         const a = vx ? new Clutter.Actor({ x, y }) : parent;
         if (vx) parent.add_child(a);
@@ -163,11 +165,11 @@ export class Tank {
     // Plant sprite cut into segments at its joints (j1, j2, ...), each rotating about the one below.
     _plant(parent, x, y, k, amp, species = null) {
         const r = this._rand;
-        const name = `plant_${species ?? SPECIES[(r() * SPECIES.length) | 0]}_${(r() * 2) | 0}`;
+        const name = `plant_${species ?? PLANTS[(r() * PLANTS.length) | 0]}_${(r() * 2) | 0}`;
         const m = this._m[name];
-        if (!m?.base) return;
+        if (!pt(m?.base)) return;
         const js = [m.base];
-        for (let i = 1; m['j' + i]; i++) js.push(m['j' + i]);
+        for (let i = 1; pt(m['j' + i]); i++) js.push(m['j' + i]);
         const mir = r() < 0.5 ? -k : k, ph = r() * TAU, sp = 0.35 + r() * 0.25, lean = (r() - 0.5) * 6;
         const img = this._img(name);
         if (!img) return;
@@ -201,7 +203,7 @@ export class Tank {
     }
 
     _bubbles(parent, at) {
-        const bm = this._m.bubble, img = bm && this._img('bubble');
+        const bm = this._m.bubble, img = this._img('bubble');
         if (!img) return;
         const layer = new Clutter.Actor();
         parent.add_child(layer);
@@ -210,11 +212,11 @@ export class Tank {
             a.set_pivot_point(0.5, 0.5);
             this._pool.push({a, live: false, x: 0, y: 0, v: 0, vmax: 0, amp: 0, f: 0, ph: 0});
         }
-        const pt = (n, p) => {
+        const spot = (n, p) => {
             const a = at[n], m = this._m[n];
-            return a && m[p] ? [a.x + m.base[0] + (m[p][0] - m.base[0]) * a.scale_x, a.y + m.base[1] + (m[p][1] - m.base[1]) * a.scale_y] : null;
+            return a && pt(m[p]) ? [a.x + m.base[0] + (m[p][0] - m.base[0]) * a.scale_x, a.y + m.base[1] + (m[p][1] - m.base[1]) * a.scale_y] : null;
         };
-        const stone = pt('bubbler', 'outlet'), valve = pt('diver', 'valve'), mouth = pt('chest', 'mouth');
+        const stone = spot('bubbler', 'outlet'), valve = spot('diver', 'valve'), mouth = spot('chest', 'mouth');
         const lid = at.chest && [...Array(10).keys()].map(i => this._img(`chest_lid_${i}`));
         let lidA = null;
         if (lid?.every(Boolean)) {  // lid frames are cropped on their own: ox/oy place them on the body
@@ -275,7 +277,7 @@ export class Tank {
     _snail(parent, x0, x1, y) {
         const frames = [...Array(8).keys()].map(i => this._img(`snail_${i}`));
         const m = this._m.snail_0;
-        if (!m?.base || !frames.every(Boolean)) return;
+        if (!pt(m?.base) || !frames.every(Boolean)) return;
         const a = this._actor(parent, frames[0], {width: m.w, height: m.h, y: y - m.base[1]});
         a.set_pivot_point(m.base[0] / m.w, 0);
         let x = x0 + (x1 - x0) * 0.3, dir = 1, ph = 0, f = 0, rest = 0, tx = NaN;
@@ -309,9 +311,6 @@ export class Tank {
         fade(this._tint[1], warm ? 0.13 : 0, k);
     }
 
-    destroy() {  // actors go with ctx.root, which the host destroys
-        this._anims = this._slow = this._pool = [];
-    }
 }
 
 function fade(g, goal, k) {

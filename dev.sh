@@ -15,6 +15,7 @@ ln -s "$here" "$tmp/data/gnome-shell/extensions/$uuid"
 export XDG_DATA_HOME="$tmp/data" XDG_CONFIG_HOME="$tmp/config" MUTTER_DEBUG_DUMMY_MODE_SPECS="$size"
 exts="'$uuid'"
 set_scene=true
+case ${SCENE:-}$size in *[!a-z0-9_-]*) echo 'bad SCENE/SIZE' >&2; exit 1;; esac  # both are pasted into sh -c
 [ -n "${SCENE:-}" ] && set_scene="gsettings --schemadir '$here/schemas' set org.gnome.shell.extensions.interactive-wallpaper scene '$SCENE'"
 setup="$set_scene && gsettings set org.gnome.shell welcome-dialog-last-shown-version 999"
 if [ "${1:-}" = --headless ]; then

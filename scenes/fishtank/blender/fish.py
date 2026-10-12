@@ -192,7 +192,7 @@ def material(name, col, dat, alpha=False, sss=0.12, coat=0.25, film=0.0, sheen=0
     return m
 
 
-def flat_material(name, color, rough=0.3, coat=0.0, sss=0.0, emit=0.0):
+def flat_material(name, color, rough=0.3, coat=0.0, sss=0.0):
     m = bpy.data.materials.new(name)
     m.use_nodes = True
     b = m.node_tree.nodes['Principled BSDF']
@@ -457,9 +457,9 @@ def world_points(fish, ph, puff, yaw):
     return np.stack([pts[:, 0] * c - pts[:, 1] * s, pts[:, 0] * s + pts[:, 1] * c, pts[:, 2]], -1)
 
 
-def frame_box(fish, ppm, puffs):
+def frame_box(fish, ppm, puffs, yaws):
     lo, hi = np.full(2, 1e9), np.full(2, -1e9)
-    for yaw in YAWS:
+    for yaw in yaws:
         for ph in (0, 0.25, 0.5, 0.75):
             for pf in puffs:
                 w = world_points(fish, ph, pf, yaw)[:, [0, 2]]
@@ -470,16 +470,16 @@ def frame_box(fish, ppm, puffs):
     return (lo + hi) / 2, W, H
 
 
-def render_sheet(fish, ppm, tag, puffs, phases, tmp, preview=None):
+def render_sheet(fish, ppm, puffs, phases, tmp, out, yaws=YAWS):
     s = bpy.context.scene
-    ctr, W, H = frame_box(fish, ppm, puffs)
+    ctr, W, H = frame_box(fish, ppm, puffs, yaws)
     cam = common.camera(W / ppm, W, H, z=ctr[1])
     cam.location.x = ctr[0]
     cols = len(phases) * len(puffs)
-    sheet = np.zeros((len(YAWS) * H, cols * W, 4), np.float32)
+    sheet = np.zeros((len(yaws) * H, cols * W, 4), np.float32)
     eyes = []
     path = os.path.join(tmp, 'f.png')
-    for yi, yaw in enumerate(YAWS):
+    for yi, yaw in enumerate(yaws):
         fish.root.rotation_euler = (0, 0, math.radians(-yaw))
         row = []
         for ci, (pf, ph) in enumerate((pf, ph) for pf in puffs for ph in phases):
@@ -487,24 +487,13 @@ def render_sheet(fish, ppm, tag, puffs, phases, tmp, preview=None):
             bpy.context.view_layer.update()
             s.render.filepath = path
             bpy.ops.render.render(write_still=True)
-            im = bpy.data.images.load(path)
-            a = np.empty(W * H * 4, np.float32)
-            im.pixels.foreach_get(a)
-            bpy.data.images.remove(im)
-            sheet[yi * H:(yi + 1) * H, ci * W:(ci + 1) * W] = a.reshape(H, W, 4)[::-1]
+            sheet[yi * H:(yi + 1) * H, ci * W:(ci + 1) * W] = common.load_png(path)
             row.append(eye_info(fish, ph, pf, yaw, ctr, W, H, ppm))
         eyes.append(row)
-    anchor = [round((0 - ctr[0]) * ppm + W / 2, 2), round(H / 2 + (ctr[1] - 0) * ppm, 2)]
-    if preview:
-        return sheet, W, H
-    out = os.path.join(common.ASSETS, f'{tag}.png')
-    im = bpy.data.images.new(tag, sheet.shape[1], sheet.shape[0], alpha=True)
-    im.pixels.foreach_set(sheet[::-1].ravel())
-    im.filepath_raw = out
-    im.file_format = 'PNG'
-    im.save()
+    anchor = [round(-ctr[0] * ppm + W / 2, 2), round(H / 2 + ctr[1] * ppm, 2)]
+    common.save_png(sheet, out)
     # rows = yaws, cols = frames; eyes flattened row-major so eyes[i] belongs to frame i
-    return dict(w=W, h=H, cols=cols, n=cols * len(YAWS), anchor=anchor, eyes=[e for r in eyes for e in r])
+    return dict(w=W, h=H, cols=cols, n=cols * len(yaws), anchor=anchor, eyes=[e for r in eyes for e in r])
 
 
 def eye_info(fish, ph, puff, yaw, ctr, W, H, ppm):
@@ -533,7 +522,7 @@ def eye_info(fish, ph, puff, yaw, ctr, W, H, ppm):
 
 def build(name):
     common.reset(SAMPLES)
-    key, fill, rim = common.lights()
+    key, fill, _ = common.lights()
     fill.data.energy = 110  # less flat than the shared fill so bodies read round
     key.data.energy = 4.5
     s = bpy.context.scene
@@ -550,21 +539,15 @@ def run(name, preview=None):
     ppm = fish.px * SIZE / (rest[:, 0].max() - rest[:, 0].min())
     with tempfile.TemporaryDirectory() as tmp:
         if preview:  # big stills at a few yaws for looking at the model
-            global YAWS
-            keep, YAWS = YAWS, [0, 30, 60, 90]
-            sheet, W, H = render_sheet(fish, ppm * 4, name, [0.0], [0.0, 0.3], tmp, preview=True)
-            YAWS = keep
-            im = bpy.data.images.new('pv', sheet.shape[1], sheet.shape[0], alpha=True)
-            im.pixels.foreach_set(sheet[::-1].ravel())
-            im.filepath_raw = os.path.join(preview, f'{name}.png')
-            im.file_format = 'PNG'
-            im.save()
+            render_sheet(fish, ppm * 4, [0.0], [0.0, 0.3], tmp, os.path.join(preview, f'{name}.png'), yaws=[0, 30, 60, 90])
             return
         man = dict(iris=fish.iris, yaws=YAWS, len=round(fish.px * SIZE))
-        man.update(render_sheet(fish, ppm, name, [0.0], [i / FRAMES for i in range(FRAMES)], tmp))
+        out = os.path.join(common.ASSETS, name)
+        man.update(render_sheet(fish, ppm, [0.0], [i / FRAMES for i in range(FRAMES)], tmp, out + '.png'))
         if fish.inflate:
             man['puff'] = name + '-puff'
-            common.manifest(name + '-puff', render_sheet(fish, ppm, name + '-puff', [i / (PUFFS - 1) for i in range(PUFFS)], [0.0], tmp))
+            common.manifest(name + '-puff', render_sheet(fish, ppm, [i / (PUFFS - 1) for i in range(PUFFS)], [0.0], tmp,
+                                                        out + '-puff.png'))
     common.manifest(name, man)
     print(f'fish: {name} {man["w"]}x{man["h"]} x {man["cols"]} x {len(YAWS)}')
 
@@ -1013,7 +996,13 @@ SPECIES = {'clown': clown, 'tetra': tetra, 'angel': angel, 'goldfish': goldfish,
 
 if __name__ == '__main__':
     argv = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
-    pv = argv[argv.index('--preview') + 1] if '--preview' in argv else None
-    names = [a for a in argv if a in SPECIES] or list(SPECIES)
-    for n in names:
+    pv = None
+    if '--preview' in argv:
+        i = argv.index('--preview')
+        pv = argv[i + 1]
+        del argv[i:i + 2]
+    bad = [a for a in argv if a not in SPECIES]
+    if bad:
+        sys.exit(f'fish.py: unknown species {bad}; choose from {list(SPECIES)}')
+    for n in argv or SPECIES:
         run(n, pv)

@@ -3,6 +3,7 @@
 # Usage: blender -b --factory-startup -P blender/scene_plants.py [-- species ...]
 import math, os, random, sys
 import bpy
+import numpy as np
 from mathutils import Vector, Matrix
 sys.path.insert(0, os.path.dirname(__file__))
 from common import *
@@ -59,31 +60,10 @@ class Geo:
                    for i in range(n - 1) for j in range(m - 1)]
 
     def obj(self, name, mat):
-        o = mesh(name, self.v, self.f, mat)
-        me = o.data
-        lay = me.uv_layers.new(name='UVMap')
-        for poly in me.polygons:
-            for li in poly.loop_indices:
-                lay.data[li].uv = self.uv[me.loops[li].vertex_index]
-        a = me.attributes.new('rnd', 'FLOAT', 'POINT')
+        o = mesh(name, self.v, self.f, mat, uv=self.uv)
+        a = o.data.attributes.new('rnd', 'FLOAT', 'POINT')
         a.data.foreach_set('value', self.r)
         return o
-
-
-def tubes(name, paths, radius, mat, res=3):
-    """Stems/rhizomes: one curve object, a tapered round tube per path. radius(t) per path."""
-    cu = bpy.data.curves.new(name, 'CURVE')
-    cu.dimensions, cu.bevel_depth, cu.bevel_resolution, cu.use_fill_caps = '3D', 1.0, res, True
-    for pts, rad in zip(paths, radius):
-        sp = cu.splines.new('POLY')
-        sp.points.add(len(pts) - 1)
-        for i, p in enumerate(pts):
-            sp.points[i].co = (*p, 1)
-            sp.points[i].radius = rad(i / (len(pts) - 1))
-    o = bpy.data.objects.new(name, cu)
-    bpy.context.scene.collection.objects.link(o)
-    cu.materials.append(mat)
-    return o
 
 
 def leaf_mat(name, base, tip, vein, alt=None, old=0.15, veins='net', trans=0.35, rough=0.45, coat=0.0,
@@ -161,8 +141,8 @@ def roots(base, n, spread, length):
     for _ in range(n):
         az = random.uniform(0, math.tau)
         paths.append(arc(base + V((0, 0, 0.02)), az, -0.25, length * random.uniform(0.5, 1), droop=-0.4, n=8, wob=2.5))
-    return tubes('roots', paths, [lambda t: 0.012 * (1 - t) + 0.003] * n,
-                 stem_mat('root', (0.45, 0.4, 0.3), (0.3, 0.25, 0.17)), res=1)
+    return curve('roots', paths, 1.0, radii=lambda t: 0.012 * (1 - t) + 0.003,
+                 mat=stem_mat('root', (0.45, 0.4, 0.3), (0.3, 0.25, 0.17)), res=1)
 
 
 def taper(W, tip=6, base=0.3, rise=20):
@@ -177,19 +157,15 @@ def lance(W, sharp=1.0):
 def fade_shadow(name, base, R):
     """The floor catches the whole canopy's shadow; keep only a soft pool around the roots so
     the sprite has no shadow edge where it was cropped. Pure-shadow pixels are the black ones."""
-    import numpy as np
     path = os.path.join(ASSETS, name + '.png')
-    img = bpy.data.images.load(path)
-    W, H = img.size
-    px = np.array(img.pixels[:], dtype=np.float32).reshape(H, W, 4)
+    px = load_png(path)
+    H, W = px.shape[:2]
     yy, xx = np.mgrid[0:H, 0:W]
-    d = np.hypot(xx - base[0], ((H - 1 - yy) - base[1]) * 2.5) / R  # rows are bottom-up here
+    d = np.hypot(xx - base[0], (yy - base[1]) * 2.5) / R
     fall = np.clip(1 - d, 0, 1) ** 1.5
     shadow = px[:, :, :3].max(axis=2) < 0.02
     px[:, :, 3] = np.where(shadow, px[:, :, 3] * fall, px[:, :, 3])
-    img.pixels[:] = px.ravel()
-    img.save()
-    bpy.data.images.remove(img)
+    save_png(px, path)
 
 
 # ---------------- species ----------------
@@ -226,7 +202,8 @@ def sword(h):
                     m=9, cup=0.22, wave=0.06))
     mat = leaf_mat('sword', (0.09, 0.22, 0.04), (0.2, 0.42, 0.08), (0.45, 0.6, 0.22), alt=(0.16, 0.3, 0.03),
                    old=0.18, trans=0.35, coat=0.2)
-    st = tubes('swordstem', petioles, [lambda t: 0.028 * (1 - 0.5 * t)] * k, stem_mat('swst', (0.15, 0.28, 0.06), (0.25, 0.35, 0.1)))
+    st = curve('swordstem', petioles, 1.0, radii=lambda t: 0.028 * (1 - 0.5 * t),
+               mat=stem_mat('swst', (0.15, 0.28, 0.06), (0.25, 0.35, 0.1)), res=3)
     return [g.obj('sword', mat), st, roots(V((0, 0, 0)), 10, 0.5, 0.55)]
 
 
@@ -250,10 +227,10 @@ def javafern(h):
     mat = leaf_mat('jfern', (0.04, 0.12, 0.03), (0.1, 0.25, 0.05), (0.18, 0.32, 0.08), alt=(0.08, 0.16, 0.02),
                    old=0.15, trans=0.25, rough=0.4, spots=0.6)
     stem = stem_mat('jfrh', (0.03, 0.02, 0.012), (0.08, 0.05, 0.025))
-    rhz = tubes('rhizome', [rh], [lambda t: 0.035], stem)
+    rhz = curve('rhizome', [rh], 1.0, radii=lambda t: 0.035, mat=stem, res=3)
     hair = [arc(p, random.uniform(0, math.tau), random.uniform(-0.6, -0.1), random.uniform(0.08, 0.2), n=5, wob=3)
             for p in rh for _ in range(3)]
-    return [g.obj('jfern', mat), rhz, tubes('jfroots', hair, [lambda t: 0.006] * len(hair), stem, res=1)]
+    return [g.obj('jfern', mat), rhz, curve('jfroots', hair, 1.0, radii=lambda t: 0.006, mat=stem, res=1)]
 
 
 def cabomba(h):
@@ -281,7 +258,7 @@ def cabomba(h):
             z += 0.15 + random.uniform(-0.01, 0.03)
     mat = leaf_mat('cabomba', (0.12, 0.3, 0.05), (0.22, 0.48, 0.1), (0.3, 0.5, 0.12), old=0.05, veins='par',
                    trans=0.5, zramp=(h, [(0.0, (0.08, 0.22, 0.04)), (0.5, (0.2, 0.48, 0.08)), (1.0, (0.45, 0.7, 0.15))]))
-    st = tubes('cabst', stems, [lambda t: 0.018 * (1 - 0.5 * t)] * len(stems), stem_mat('cabs', (0.1, 0.2, 0.05), (0.2, 0.32, 0.08)))
+    st = curve('cabst', stems, 1.0, radii=lambda t: 0.018 * (1 - 0.5 * t), mat=stem_mat('cabs', (0.1, 0.2, 0.05), (0.2, 0.32, 0.08)), res=3)
     return [g.obj('cabomba', mat), st, roots(V((0, 0, 0)), 8, 0.3, 0.35)]
 
 
@@ -309,7 +286,7 @@ def ludwigia(h):
     mat = leaf_mat('ludwigia', (0.1, 0.2, 0.04), (0.3, 0.08, 0.06), (0.5, 0.25, 0.2), alt=(0.35, 0.1, 0.12),
                    old=0.12, trans=0.45, coat=0.15, algae=0.15,
                    zramp=(h, [(0.0, (0.12, 0.26, 0.05)), (0.4, (0.35, 0.32, 0.06)), (0.7, (0.7, 0.16, 0.1)), (1.0, (0.9, 0.22, 0.2))]))
-    st = tubes('ludst', stems, [lambda t: 0.022 * (1 - 0.4 * t)] * len(stems), stem_mat('luds', (0.25, 0.1, 0.06), (0.35, 0.16, 0.1)))
+    st = curve('ludst', stems, 1.0, radii=lambda t: 0.022 * (1 - 0.4 * t), mat=stem_mat('luds', (0.25, 0.1, 0.06), (0.35, 0.16, 0.1)), res=3)
     return [g.obj('ludwigia', mat), st, roots(V((0, 0, 0)), 8, 0.3, 0.35)]
 
 
@@ -332,9 +309,10 @@ def anubias(h):
     stem = stem_mat('anrh', (0.04, 0.07, 0.02), (0.1, 0.12, 0.04))
     hair = [arc(p, random.uniform(0, math.tau), random.uniform(-0.7, -0.2), random.uniform(0.15, 0.35), n=6, wob=2)
             for p in rh[::2] for _ in range(2)]
-    return [g.obj('anubias', mat), tubes('anrh', [rh], [lambda t: 0.06 - 0.02 * t], stem),
-            tubes('anpet', pets, [lambda t: 0.018] * len(pets), stem),
-            tubes('anroot', hair, [lambda t: 0.01 * (1 - t) + 0.003] * len(hair), stem_mat('anr', (0.4, 0.37, 0.28), (0.28, 0.24, 0.16)), res=1)]
+    return [g.obj('anubias', mat), curve('anrh', [rh], 1.0, radii=lambda t: 0.06 - 0.02 * t, mat=stem, res=3),
+            curve('anpet', pets, 1.0, radii=lambda t: 0.018, mat=stem, res=3),
+            curve('anroot', hair, 1.0, radii=lambda t: 0.01 * (1 - t) + 0.003,
+                  mat=stem_mat('anr', (0.4, 0.37, 0.28), (0.28, 0.24, 0.16)), res=1)]
 
 
 def hairgrass(h):
@@ -364,11 +342,13 @@ SPECIES = {
 }
 
 want = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else list(SPECIES)
-samples = int(os.environ.get('SAMPLES', 256))
+bad = [a for a in want if a not in SPECIES]
+if bad:
+    sys.exit(f'scene_plants.py: unknown species {bad}; choose from {list(SPECIES)}')
 for sp_name in want:
     build, heights, K = SPECIES[sp_name]
     for n, h in enumerate(heights):
-        scenery(samples)
+        scenery()
         seed(sum(map(ord, sp_name)) + n * 17)
         objs = build(h)
         ground(12)

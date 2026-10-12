@@ -6,14 +6,6 @@ sys.path.insert(0, os.path.dirname(__file__))
 from common import *
 
 
-def solo(objs):
-    """Show only objs (plus lights/floor) for the next render."""
-    keep = set(objs)
-    for o in bpy.context.scene.objects:
-        if o.type in ('MESH', 'CURVE') and not o.is_shadow_catcher and o.visible_camera is not None:
-            o.hide_render = o not in keep and o.name != 'bouncefloor'
-
-
 def tentacles(rnd, at, mat, n=26, r=0.16, ln=0.35):
     """Sea anemone: a squat column topped with a ring of fat tapering tentacles."""
     out = []
@@ -43,7 +35,7 @@ def tentacles(rnd, at, mat, n=26, r=0.16, ln=0.35):
     return out
 
 
-def arch(rnd, mat):
+def arch(mat):
     """Rock arch: a bent, lumpy tube faceted like the boulders."""
     cu = bpy.data.curves.new('arch', 'CURVE')
     cu.dimensions, cu.bevel_depth, cu.bevel_resolution, cu.use_fill_caps = '3D', 0.45, 6, True
@@ -98,7 +90,7 @@ def air_stone(mat, tube_mat):
 
 
 def build():
-    scenery(256)
+    scenery()
     rnd = np.random.default_rng(4)
     ground(30)
     a = rock((1.5, 1.1, 0.95), 0.35, 1)
@@ -112,7 +104,7 @@ def build():
         o.data.materials.append(river)
     anem = pbr('anemone', (0.65, 0.12, 0.3), (0.95, 0.45, 0.55), rough=0.4, scale=6, bump=0.2, sss=0.5, grime=0.2)
     c += tentacles(rnd, (0.05, -0.05, 0.36), anem)
-    d = arch(rnd, stone('rock_d', moss=0.55, c1=(0.06, 0.06, 0.055), c2=(0.18, 0.16, 0.13)))
+    d = arch(stone('rock_d', moss=0.55, c1=(0.06, 0.06, 0.055), c2=(0.18, 0.16, 0.13)))
     porous = pbr('airstone', (0.35, 0.38, 0.42), (0.6, 0.62, 0.65), rough=0.95, scale=12, bump=0.8, vor=1.0, grime=0.8)
     glass = new_mat('tubing')
     N(glass, 'OutputMaterial', Surface=N(glass, 'BsdfGlass', Color=(0.85, 0.95, 0.9, 1), Roughness=0.08, IOR=1.4))

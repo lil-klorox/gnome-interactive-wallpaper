@@ -21,7 +21,7 @@ def flat(name, w, h, build, samples=32):
     uv = N(m, 'TexCoord')
     col, a = build(m, (uv, 'UV'))
     em = N(m, 'Emission', Color=col, Strength=1.0)
-    mix = N(m, 'MixShader', Fac=a, **{})
+    mix = N(m, 'MixShader', Fac=a)
     m.node_tree.links.new(N(m, 'BsdfTransparent').outputs[0], mix.inputs[1])
     m.node_tree.links.new(em.outputs[0], mix.inputs[2])
     N(m, 'OutputMaterial', Surface=mix)
@@ -29,16 +29,11 @@ def flat(name, w, h, build, samples=32):
     return render(f'{name}.png')
 
 
-def torus(m, uv, R, both=True, vscale=1.0):
-    """Periodic 4D coords from UV: returns (vector, w) for 4D noise/voronoi."""
+def torus(m, uv, R, vscale):
+    """Coords wrapping round in u (so it tiles), stretched by vscale in v: (vector, w) for 4D noise."""
     sep = N(m, 'SeparateXYZ', Vector=uv)
     u = M(m, 'MULTIPLY', (sep, 'X'), 2 * math.pi)
-    v = M(m, 'MULTIPLY', (sep, 'Y'), 2 * math.pi)
     cu, su = M(m, 'COSINE', u), M(m, 'SINE', u)
-    if both:
-        cv, sv = M(m, 'COSINE', v), M(m, 'SINE', v)
-        vec = N(m, 'CombineXYZ', X=M(m, 'MULTIPLY', cu, R), Y=M(m, 'MULTIPLY', su, R), Z=M(m, 'MULTIPLY', cv, R))
-        return vec, M(m, 'MULTIPLY', sv, R)
     vec = N(m, 'CombineXYZ', X=M(m, 'MULTIPLY', cu, R), Y=M(m, 'MULTIPLY', su, R), Z=M(m, 'MULTIPLY', (sep, 'Y'), vscale))
     return vec, M(m, 'MULTIPLY', (sep, 'Y'), 0.0)
 
@@ -74,7 +69,7 @@ def backdrop(m, uv):
 # Underside of the surface: bright sheen at the top broken by long wobbling ripple streaks
 # (squashed caustic lines + stretched noise), tiles horizontally.
 def surface(m, uv):
-    vec, w = torus(m, uv, 2.0, both=False, vscale=14.0)
+    vec, w = torus(m, uv, 2.0, 14.0)
     lines = caustic(m, vec, w, 1.4, 0.1)
     st = N(m, 'TexNoise', _noise_dimensions='4D', Vector=vec, W=1.3, Scale=0.9, Detail=4.0)
     streak = N(m, 'MapRange', Value=(st, 'Fac'), **{'From Min': 0.42, 'From Max': 0.62}, _interpolation_type='SMOOTHSTEP')
@@ -104,7 +99,7 @@ def ray(m, uv):
 # Caustic net for the sand: tiles horizontally, squashed 3x like light lying on a floor seen at a
 # low angle, fading out toward the back (top).
 def caustics(m, uv):
-    vec, w = torus(m, uv, 2.0, both=False, vscale=20.0)
+    vec, w = torus(m, uv, 2.0, 20.0)
     a1 = caustic(m, vec, w, 1.15, 0.06)
     a2 = caustic(m, vec, M(m, 'ADD', w, 3.7), 2.0, 0.04)
     a = M(m, 'ADD', M(m, 'MULTIPLY', (a1, 'Result'), 0.8), M(m, 'MULTIPLY', (a2, 'Result'), 0.35))

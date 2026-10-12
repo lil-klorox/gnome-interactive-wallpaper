@@ -12,16 +12,10 @@ FRONT, BACK = -1.2, 15.0
 FADE = (9.5, 13.5)       # sand fades out between these depths into the far plates
 
 
-def wrap(o):
-    for dx in (-P, P):
-        c = o.copy()
-        c.location.x += dx
-        bpy.context.scene.collection.objects.link(c)
-
-
-def heights(x, y, rnd):
+def heights(x, y):
     """Dunes + meandering ripples whose crests run left-right; every x term has a whole number of
     cycles per period so the strip tiles."""
+    rnd = np.random.default_rng(1)
     h = np.zeros_like(x)
     for k in range(1, 7):
         for j in (0.15, 0.3, 0.5):
@@ -35,15 +29,9 @@ def heights(x, y, rnd):
 
 def fade_back(m):
     """Final shader -> transparent between FADE depths (after fog, so alpha survives)."""
-    nt = m.node_tree
-    out = next(n for n in nt.nodes if n.type == 'OUTPUT_MATERIAL')
-    surf = out.inputs['Surface'].links[0].from_socket
     y = N(m, 'SeparateXYZ', Vector=(N(m, 'NewGeometry'), 'Position'))
     f = N(m, 'MapRange', Value=(y, 'Y'), **{'From Min': FADE[0], 'From Max': FADE[1]}, _interpolation_type='SMOOTHSTEP')
-    mix = N(m, 'MixShader', Fac=(f, 'Result'))
-    nt.links.new(surf, mix.inputs[1])
-    nt.links.new(N(m, 'BsdfTransparent').outputs[0], mix.inputs[2])
-    nt.links.new(mix.outputs[0], out.inputs['Surface'])
+    mix_surface(m, (f, 'Result'), N(m, 'BsdfTransparent'))
 
 
 def varied(name, stops, rough=0.5, coat=0.0, scale=6.0, bump=0.3, sss=0.0):
@@ -87,9 +75,9 @@ def pebbles(rnd, n):
         sz = rnd.uniform(0.025, 0.08) * (1.8 if rnd.random() < 0.08 else 1)
         c.scale = (sz, sz, sz)
         c.rotation_euler = (rnd.uniform(-0.3, 0.3), rnd.uniform(-0.3, 0.3), rnd.uniform(0, 6.3))
-        c.location = (x, y, float(heights(np.array([x]), y, np.random.default_rng(1))[0]) - sz * 0.35)
+        c.location = (x, y, float(heights(np.array([x]), y)[0]) - sz * 0.35)
         bpy.context.scene.collection.objects.link(c)
-        wrap(c)
+        wrap(c, P)
 
 
 def scallop(mat):
@@ -158,18 +146,18 @@ def starfish(mat, rnd):
 
 
 def build():
-    scenery(256)
+    scenery()
     rnd = np.random.default_rng(7)
     nx, ny = 700, 220
     xs = np.linspace(-P / 2, P / 2, nx)
     ys = np.linspace(FRONT, BACK, ny)
     verts = []
     for y in ys:
-        verts += [(x, y, z) for x, z in zip(xs, heights(xs, y, np.random.default_rng(1)))]
+        verts += [(x, y, z) for x, z in zip(xs, heights(xs, y))]
     faces = [(j * nx + i, j * nx + i + 1, (j + 1) * nx + i + 1, (j + 1) * nx + i) for j in range(ny - 1) for i in range(nx - 1)]
     sm = sand_mat(P)
     bed = mesh('sand', verts, faces, sm)
-    wrap(bed)
+    wrap(bed, P)
     pebbles(rnd, 420)
     shell_m = varied('shell', [(0.0, (0.75, 0.62, 0.5)), (0.3, (0.8, 0.45, 0.35)), (0.55, (0.85, 0.75, 0.6)),
                                (0.8, (0.6, 0.3, 0.15)), (1.0, (0.9, 0.85, 0.8))], rough=0.35, coat=0.6, scale=14, bump=0.4, sss=0.1)
@@ -188,7 +176,7 @@ def build():
         c = protos[k].copy()
         sz = rnd.uniform(0.2, 0.3) if k < 2 else rnd.uniform(0.45, 0.65)
         c.scale = (sz, sz, sz)
-        z = float(heights(np.array([x]), y, np.random.default_rng(1))[0])
+        z = float(heights(np.array([x]), y)[0])
         if k == 0:
             c.rotation_euler = (rnd.uniform(-0.5, 0.5) + (math.pi if rnd.random() < 0.3 else 0), rnd.uniform(-0.3, 0.3), rnd.uniform(0, 6.3))
         elif k == 1:
@@ -197,7 +185,7 @@ def build():
             c.rotation_euler = (rnd.uniform(-0.1, 0.1), rnd.uniform(-0.1, 0.1), rnd.uniform(0, 6.3))
         c.location = (x, y, z - sz * 0.05)
         bpy.context.scene.collection.objects.link(c)
-        wrap(c)
+        wrap(c, P)
     v0 = (FRONT + 0.6) * math.sin(T)  # a little in from the front edge so dunes never dip below the frame
     fog(0.0, 0.25, vmap=(PPU / 1440, -v0 * PPU / 1440))
     fade_back(sm)

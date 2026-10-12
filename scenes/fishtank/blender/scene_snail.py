@@ -125,14 +125,10 @@ def eye_mat():
     return m
 
 
-scenery(int(os.environ.get('SAMPLES', 256)))
+scenery()
 skin, eye = skin_mat(), eye_mat()
 sv, sf, suv = shell_mesh()
-shell = mesh('shell', sv, sf, shell_mat())
-lay = shell.data.uv_layers.new(name='UVMap')
-for poly in shell.data.polygons:
-    for li in poly.loop_indices:
-        lay.data[li].uv = suv[shell.data.loops[li].vertex_index]
+shell = mesh('shell', sv, sf, shell_mat(), uv=suv)
 shell.rotation_euler = (0, math.radians(-12), 0)
 ground(4)
 for f in range(8):

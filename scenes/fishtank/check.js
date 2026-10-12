@@ -1,6 +1,5 @@
 // Self-check for brain.js + steer.js: `gjs -m check.js` or `node check.js`.
 import { makeBrain, think, PERSONALITY, NEAR, FAST, SEE, drowsy, lazy } from './brain.js';
-import { frameOffset } from '../../render.js';
 import { makeFish, step } from './steer.js';
 
 let seed = 1;
@@ -142,7 +141,4 @@ const school = night => {
 };
 const [dayY, daySpread] = school(false), [nightY, nightSpread] = school(true);
 ok(nightY > dayY + 100 && nightSpread < daySpread, `tetras huddle low and tight at night (y ${dayY | 0} -> ${nightY | 0}, spread ${daySpread | 0} -> ${nightSpread | 0})`);
-
-// sprite frame i = yaw row * cols + phase col, row-major in the sheet, as fish.js indexes it
-ok(String(frameOffset({ w: 116, h: 165, cols: 12 }, 3 * 12 + 5)) === String([5 * 116, 3 * 165]), 'frame index is row-major');
 console.log('brain + steer ok');

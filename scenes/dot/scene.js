@@ -26,6 +26,5 @@ export default function create(ctx) {
             dot.set_scale(1 + pop, 1 + pop);
             dot.opacity = hour >= 21 || hour < 6 || dark ? 120 : 255;
         },
-        destroy() {},
     };
 }
