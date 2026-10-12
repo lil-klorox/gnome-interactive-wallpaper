@@ -26,8 +26,11 @@ export default function create(ctx) {
         tick(dt, t) {
             env.act = ACT[S.activity] ?? 1;
             env.curiosity = S.curiosity !== false;
-            // unseen a while: food that had landed is gone by now
-            if (ctx.world.gap) for (const p of tank.food.pieces) if (p.settled) p.fade += ctx.world.gap;
+            // unseen a while: landed food is gone by now, sinking food has sunk (the next food tick lands it)
+            if (ctx.world.gap) for (const p of tank.food.pieces) {
+                if (p.settled) p.fade += ctx.world.gap;
+                else if (p.live) p.y += p.vy * Math.min(ctx.world.gap, 20);
+            }
             // on bare desktop: a click drops a pinch, holding pours
             const top = P.y < tank.swimBounds.y + 40;
             switch (gesture(g, P, dt)) {
