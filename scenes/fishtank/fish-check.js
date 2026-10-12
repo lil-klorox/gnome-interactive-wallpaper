@@ -69,13 +69,13 @@ for (const n of [0, 1]) {
     }
 }
 
-// body crossfade: lower frame solid to halfway, upper fully in from halfway, never both faint
+// body crossfade: near, lower frame solid to halfway, upper fully in from halfway; far, the stack always adds up to op
 {
     const w = [0, 0];
     ok(String(blend(0, 255, w)) === '255,0' && String(blend(1, 255, w)) === '0,255', 'blend ends');
     for (let t = 0; t <= 1; t += 0.05) {
         blend(t, 165, w);
-        ok(Math.max(...w) === 165 && w.every(v => v >= 0 && v <= 165), 'one frame always at full opacity');
+        ok(Math.abs(255 - (255 - w[0]) * (255 - w[1]) / 255 - 165) < 1.5 && w.every(v => v >= 0 && v <= 165), 'far stack always reads as op');
     }
 }
 // the tame favourite: the most fed once past PET; never flees a slow cursor, hovers closest, ignores taps

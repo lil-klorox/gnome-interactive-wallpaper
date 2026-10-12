@@ -27,9 +27,13 @@ export function drift(fl, x, y) {
 // Body crossfade weights (fish.js) for two stacked sprite frames at blend t (0..1): the lower
 // frame stays solid until halfway, the upper is fully in by then, so the body never turns
 // see-through mid-blend (a plain (1-t, t) split leaves it 75 % opaque at t = 0.5).
+// bug fix: see-through (far) fish kept the lower frame at op under the upper one, so the stack read
+// up to 35 % more solid mid-blend and far fish flickered with every frame step and burst; now the lower
+// gives way so the two together are exactly op, done by halfway.
 export const blend = (t, op, out) => {
-    out[0] = Math.round(op * Math.min(1, 2 - 2 * t));
-    out[1] = Math.round(op * Math.min(1, 2 * t));
+    const b = op * Math.min(1, 2 * t);
+    out[0] = Math.round(op < 255 ? 255 * (op - b) / (255 - b) : op * Math.min(1, 2 - 2 * t));
+    out[1] = Math.round(b);
     return out;
 };
 

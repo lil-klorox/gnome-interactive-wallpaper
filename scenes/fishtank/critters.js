@@ -311,7 +311,7 @@ function moray(c) {
     for (let k = 0; k < NSEG; k++) segs.push(mk(segSh, 'anchor'));
     const tail = mk(tailSh, 'anchor');
     const P = new Float64Array(MAXP * 2), C = new Float64Array(MAXP), xy = new Float64Array(4), hp = new Float64Array(4);
-    const M = { st: 'peek', timer: 30 + 60 * c.rand(), face: 1, n: 1, L: 0, x: hx, y: hy, dir: 0, v: 30, yawn: 0 };
+    const M = { st: 'peek', timer: 30 + 60 * c.rand(), face: 1, n: 1, L: 0, x: hx, y: hy, dir: 0, v: 30, yawn: 0, op: 1 };
     c.events.yawn = age => age > 120 ? null : (M.yawn = 2, hx);  // a big slow gape, next time it is at the hole
     P[0] = hx; P[1] = hy;
     // point and unit tangent at arc length d along the path (clamped to its ends)
@@ -355,6 +355,7 @@ function moray(c) {
                 if (M.L <= 0) { M.st = 'peek'; M.L = 0; M.n = 1; M.x = hx; M.y = hy; M.timer = (60 + 120 * c.rand()) / act; }
             }
             if (M.st === 'peek') {  // head at the hole, breathing (or the daily yawn: mouth wide for 2 s)
+                if (M.op < 1) H.fade(255 * (M.op = Math.min(1, M.op + dt * 3)));  // back out of the dark after a hide
                 const yawn = M.yawn > 0 && (M.yawn -= dt) > 0;
                 H.put(yawn ? 5 : Math.min(5, Math.max(0, Math.round(3 + 2.5 * Math.sin(t * TAU * 0.5)))), hx, hy, M.face, 1, 0);
                 if (yawn) c.spot(M, hx * c.s, hy * c.s);
@@ -362,7 +363,10 @@ function moray(c) {
                 tail.show(false);
                 return;
             }
-            if (M.st === 'hide') { H.show(false); return; }
+            if (M.st === 'hide') {  // bug fix: hid in one frame (a snap); now a quick fade back into the hole
+                if ((M.op = Math.max(0, M.op - dt * 5)) > 0) H.fade(255 * M.op); else H.show(false);
+                return;
+            }
             if (M.st === 'out') { hp[0] = M.x; hp[1] = M.y; hp[2] = Math.cos(M.dir); hp[3] = Math.sin(M.dir); } else hp.set(at(M.L));
             const p = hp;
             const gape = Math.min(5, Math.max(0, Math.round(1 + 1.5 * Math.sin(t * TAU * 0.5))));
