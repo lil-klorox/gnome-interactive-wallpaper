@@ -5,8 +5,9 @@ GNOME 45+), drawing Clutter/St actors in each monitor's background actor. The en
 does the hard parts once, so scenes stay small: it owns the background slot, the frame clock and
 pausing, a polled `world` snapshot (lights schedule included), texture sizing/loading/sharing under a
 memory budget, per-scene settings with a generated settings page, a poster wallpaper, a Quick
-Settings tile, a per-scene JSON store and a watchdog. A scene is a folder with one `create(ctx)`. Fishtank is the
-showcase scene that proves the engine; `dot` is the minimal example.
+Settings tile, a per-scene JSON store and a watchdog. A scene is a folder with one `create(ctx)`. Fishtank and the
+sand garden are the scenes that prove the engine (sprites vs. a hand-painted canvas); `dot` is the
+minimal example.
 No subprocess, no WebKit, no video, no IPC, no deps.
 
 ## Decisions
