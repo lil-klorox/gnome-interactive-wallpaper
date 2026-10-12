@@ -1,7 +1,7 @@
 {
   "uuid": "interactive-wallpaper@lil-klorox",
   "name": "Interactive Wallpaper",
-  "description": "Living wallpapers that notice your desktop: fish scatter from dragged windows, doze when you're idle, dim at night and glance at notifications. First scene: a fishtank.",
+  "description": "Living wallpapers that notice your desktop: fish scatter from dragged windows, doze when you're idle, dim at night and glance at notifications. Scenes: a fishtank and a sand garden you rake with the mouse.",
   "shell-version": ["45", "46", "47", "48", "49"],
   "settings-schema": "org.gnome.shell.extensions.interactive-wallpaper",
   "url": "https://github.com/lil-klorox/gnome-interactive-wallpaper"

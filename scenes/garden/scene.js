@@ -90,7 +90,7 @@ export default function create(ctx) {
             S.ring(F, r, all, bb, true);
         const g = p.e === lantern && Array.isArray(lantern.light) && art('glow');
         if (g) {
-            const gs = 2.4 * s;  // the glow spreads well past the lantern
+            const gs = 3 * s;  // a wide, soft pool so the lantern itself stays readable
             glow = {e: g, x: x + lantern.light[0] * s - g.w * gs / 2, y: y + lantern.light[1] * s - g.h * gs / 2, gs};
         }
     }
@@ -132,7 +132,7 @@ export default function create(ctx) {
         tint.opacity = !lightsOn ? 120 : warm ? 40 : 0;
         shade.opacity = dark ? 60 : 0;
         if (glowA)
-            glowA.opacity = lightsOn ? 0 : warm ? 90 : 180;
+            glowA.opacity = lightsOn ? 0 : warm ? 60 : 115;
     };
 
     // Saved garden: replay strokes (scaled to this screen size), each as deep as its age leaves it.
