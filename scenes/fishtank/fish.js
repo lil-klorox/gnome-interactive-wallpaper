@@ -14,17 +14,18 @@ import { pt } from './tank.js';
 // n: default count (settings override); cruise px/s at full size; burst/coast: wander gait s;
 // turn rad/s; school: id; morph: optional colour sheet `<name>-<morph>`; rate: x tail beat;
 // rateMin: tail never slower (fluttering pectorals); accel: x cruise px/s² limit; coastG: coast
-// gait (0 = stops between bursts); hop: bursts kick off the sand; finRate: tail rate when resting.
+// gait (0 = stops between bursts); hop: bursts kick off the sand; finRate: tail rate when resting;
+// snap: nearest frame, no crossfade (see-through fins double up mid-blend).
 const SPECIES = [
     { name: 'clown', n: 2, cruise: 70, burst: 0.4, coast: 2 },
     { name: 'tetra', n: 6, cruise: 90, burst: 0.3, coast: 1.2, school: 'tetra' },
-    { name: 'angel', n: 2, cruise: 55, burst: 0.5, coast: 4, turn: 1.6, school: 'angel', morph: 'gold' },
+    { name: 'angel', n: 2, cruise: 55, burst: 0.5, coast: 4, turn: 1.6, school: 'angel', morph: 'gold', snap: true },
     { name: 'goldfish', n: 2, cruise: 80, burst: 0.5, coast: 2.5 },
     { name: 'tang', n: 1, cruise: 110, burst: 0.4, coast: 1.5 },
     { name: 'puffer', n: 1, cruise: 50, burst: 0.4, coast: 2 },
     { name: 'cory', n: 3, cruise: 60, burst: 0.3, coast: 2.5, morph: 'albino' },
     { name: 'betta', n: 1, cruise: 45, burst: 0.5, coast: 4, turn: 1.8, morph: 'koi' },
-    { name: 'lionfish', n: 1, cruise: 35, burst: 0.3, coast: 5, turn: 1.0 },
+    { name: 'lionfish', n: 1, cruise: 35, burst: 0.3, coast: 5, turn: 1.0, snap: true },
     { name: 'discus', n: 2, cruise: 50, burst: 0.5, coast: 5, turn: 1.2, school: 'discus', accel: 2 },
     { name: 'guppy', n: 5, cruise: 95, burst: 0.2, coast: 0.8, turn: 3, school: 'guppy', rate: 1.4 },
     { name: 'pleco', n: 1, cruise: 40, burst: 0.3, coast: 3, turn: 1.5, coastG: 0, finRate: 0.15 },
@@ -410,7 +411,7 @@ export class School {
         }
         // tail outrunning the frame clock (a frame or more per tick): blending only smears, show one frame
         if (bt < 0.02 || (!f.turning && r * cols * dt >= 1)) bt = 0;
-        else bt = Math.round(bt * 6) / 6;  // 6 blend steps: far fewer opacity sets, still smooth
+        else bt = sp.snap ? Math.round(bt) : Math.round(bt * 6) / 6;  // 6 blend steps: far fewer opacity sets, still smooth
         const w = blend(bt, bd.op, this._w);
         this._frame(bd.kids[0], sh, ia, w[0]);
         this._frame(bd.kids[1], sh, ib, w[1]);

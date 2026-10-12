@@ -255,7 +255,18 @@ export class Tank {
             if (rest) this.tops.push({ x0: (rest[0] - hw) * s, x1: (rest[0] + hw) * s, y: rest[1] * s });
         }
         const hole = this._point(at.ship, 'hole');
-        if (hole) this.ship = { hole: { x: hole[0] * s, y: hole[1] * s }, actor: at.ship[0] };
+        if (hole) {
+            this.ship = { hole: { x: hole[0] * s, y: hole[1] * s }, actor: at.ship[0] };
+            // shade over a dark hole: the moray (critters.js slots it just above the ship) fades into it.
+            // Ship only: the plane's cockpit is lit metal, a shade there is a smudge.
+            if (at.ship[1] === 'ship') {
+                const k = at.ship[0].scale_x, w = 120 * k, h = 80 * k;
+                for (let i = 0; i < 4; i++) {  // shadow peaks at 0.6 alpha; stacking gives a near-black core with a soft rim
+                    const a = this._add(mid, 'shadow', hole[0] - w / 2, hole[1] - h / 2, { width: w, height: h });
+                    if (a) mid.set_child_above_sibling(a, at.ship[0]);
+                }
+            }
+        }
         this._bubbles(mid, at);
         if (this._S.snail) this._snail(mid, 0.3 * W, 0.56 * W, SNAIL_Y);
         this._box.add_child(this.fishLayers[1]);

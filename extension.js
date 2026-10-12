@@ -138,6 +138,8 @@ export default class InteractiveWallpaper extends Extension {
         tog.menu.setHeader(ICON, 'Live wallpaper', 'A moving scene instead of your own wallpaper');
         const frz = new PopupMenu.PopupSwitchMenuItem('Freeze motion (keeps a still picture)', false);
         frz.connect('toggled', (_i, on) => this._settings.set_boolean('frozen', on));
+        // Menu items close the menu by emitting 'activate'; ours skip it so the menu stays open.
+        frz.activate = () => frz.toggle();
         const sync = () => {
             frz.setToggleState(this._settings.get_boolean('frozen'));
             frz.setSensitive(this._settings.get_boolean('live'));  // freezing only means something while live
@@ -150,7 +152,7 @@ export default class InteractiveWallpaper extends Extension {
         if (ids.length > 1) {
             const items = ids.map(id => {
                 const it = new PopupMenu.PopupMenuItem(SCENES[id].name);
-                it.connect('activate', () => this._settings.set_string('scene', id));
+                it.activate = () => this._settings.set_string('scene', id);
                 tog.menu.addMenuItem(it);
                 return [id, it];
             });
