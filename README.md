@@ -51,7 +51,8 @@ fish you want, or which critters live there. "Reset to defaults" puts them all b
 
 While a scene runs, a still picture of it (its "poster") becomes your normal GNOME wallpaper, so the
 lock screen, the overview and switching workspaces show the same scene instead of a plain blue
-background. Turning the live wallpaper off, or turning the extension off, puts your own wallpaper
+background. The poster shows the scenery without the fish, at day or at night to match the tank
+lights, so when you come back the fish simply appear in the same tank. Turning the live wallpaper off, or turning the extension off, puts your own wallpaper
 back. One catch: if GNOME switches the extension off by itself, for example after a crash, your old
 wallpaper isn't put back. Pick it again in Settings → Appearance.
 
@@ -98,7 +99,7 @@ so no scene has to get it right on its own:
 - it shares one copy of each picture across all your monitors
 - it draws 30 frames a second in step with your screen while you can see it, and nothing at all when
   you can't: a window (or a few tiled side by side) fills the screen, the overview is open, the
-  screen is blank or locked
+  screen is blank or locked. When it comes back, the scene can move things on by the time it was away
 - it runs a watchdog, which means a scene that throws an error gets stopped and one that keeps
   running too slowly takes a short break, while the rest of your desktop carries on as normal. If a
   scene keeps having problems it stays off until you turn the live wallpaper off and on

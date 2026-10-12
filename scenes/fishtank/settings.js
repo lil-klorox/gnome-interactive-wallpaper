@@ -1,10 +1,12 @@
 // Fishtank settings (pure data: prefs.js imports this, so no gi). Defaults = the stock tank.
 // Fish count keys are the species names, so School reads ctx.settings[species] directly.
-// rebuild: true = changing it rebuilds the tank (counts, critters, decor); the rest apply live.
-const fish = (key, label, def, max = 3) => ({key, type: 'int', label, group: 'Fish', default: def, min: 0, max, step: 1, rebuild: true});
+// Fish counts and colours apply live (fish.js adds/removes fish). rebuild: true = changing it rebuilds
+// the tank: critters and decor are wired into each other at build (the moray lives in the ship's hole,
+// bubbles rise from the diver and chest), not worth a swap path. still = the value the poster uses.
+const fish = (key, label, def, max = 3) => ({key, type: 'int', label, group: 'Fish', default: def, min: 0, max, step: 1, still: 0});
 const morph = (key, label, id, name) => ({key, type: 'choice', label, group: 'Fish', default: 'normal',
-    choices: [['normal', 'Normal'], [id, name]], rebuild: true});
-const critter = (key, label, def = true) => ({key, type: 'bool', label, group: 'Critters', default: def, rebuild: true});
+    choices: [['normal', 'Normal'], [id, name]]});
+const critter = (key, label, def = true) => ({key, type: 'bool', label, group: 'Critters', default: def, rebuild: true, still: false});
 const decor = (key, label, choices) => ({key, type: 'choice', label, group: 'Decorations', default: choices[0][0], choices, rebuild: true});
 
 export const SETTINGS = [

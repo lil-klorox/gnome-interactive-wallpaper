@@ -74,6 +74,14 @@ function row(d, v, edit, store) {
         m.connect('value-changed', set);
         return r;
     }
+    case 'action': {  // a button; each press stores the count + 1, which the scene sees as a change
+        const b = new Gtk.Button({label: d.button ?? d.label, valign: Gtk.Align.CENTER});
+        const r = new Adw.ActionRow({title: d.label, activatable_widget: b});
+        let n = v;
+        b.connect('clicked', () => edit(++n));
+        r.add_suffix(b);
+        return r;
+    }
     }
     return new Adw.ActionRow({title: d.label});
 }
@@ -126,8 +134,9 @@ export default class Prefs extends ExtensionPreferences {
             if (!decl.length)
                 return;
             const reset = new Adw.ActionRow({title: 'Reset to defaults', activatable: true});
-            reset.connect('activated', () => {
-                settings.set_string(KEY, encode(decl, settings.get_string(KEY), id, {}));
+            reset.connect('activated', () => {  // press counts stay, so a reset doesn't also press every button
+                const counts = Object.fromEntries(decl.filter(d => d.type === 'action').map(d => [d.key, vals[d.key]]));
+                settings.set_string(KEY, encode(decl, settings.get_string(KEY), id, counts));
                 fill();
             });
             add('').add(reset);

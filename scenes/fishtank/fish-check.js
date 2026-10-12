@@ -1,7 +1,7 @@
 // Fish-side asserts (brain feeding/startle, steer limits, body blend): `node fish-check.js`,
 // `gjs -m fish-check.js`, or imported by check.js. No gi.
 import { makeBrain, think, flake, PERSONALITY, petOf, PET, NEAR, SEE } from './brain.js';
-import { makeFish, step, blend } from './steer.js';
+import { makeFish, step, blend, resume } from './steer.js';
 
 let seed = 7;
 const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
@@ -15,16 +15,15 @@ const tick = (all, w) => { for (const o of all) step(o.f, dt, think(o.b, ctx(o, 
 const piece = (x, y, o = {}) => ({ live: true, layer: 1, x, y, claims: 0, bites: 0, settled: false, born: seed++, ...o });
 const feeder = { bite: k => k.live && (++k.bites >= 3 && (k.live = false), true), kick: () => {} };
 
-// claims: never more than 2 fish on a piece, and a pinch gets eaten within 20 s
+// claims: one fish per piece, and a sinking pinch (25 px/s, the food.js rate) is caught before the sand
 {
-    const pieces = [0, 1, 2, 3, 4, 5].map(i => piece(700 + i * 30, 300 + (i % 2) * 40));
+    const pieces = [0, 1, 2, 3, 4, 5].map(i => piece(700 + i * 30, 200 + (i % 2) * 40, { vy: 25 }));
     const all = [0, 1, 2, 3, 4, 5, 6, 7].map(i => fish(500 + i * 60, 450, i % 2 ? 'clown' : 'goldfish'));
-    let t = 0;
-    for (; t < 20 && pieces.some(k => k.live); t += dt) {
+    for (let t = 0; t < 26 && pieces.some(k => k.live); t += dt) {
         tick(all, { food: pieces, feeder });
-        for (const k of pieces) ok(k.claims >= 0 && k.claims <= 2, 'claims stay 0..2 (' + k.claims + ')');
+        for (const k of pieces) { k.y += k.vy * dt; ok(k.claims >= 0 && k.claims <= 1 && k.y < 880, 'one claim each, eaten before the sand'); }
     }
-    ok(pieces.every(k => !k.live), 'pinch eaten within 20 s');
+    ok(pieces.every(k => !k.live), 'sinking pinch eaten');
     ok(all.reduce((n, o) => n + o.b.fed, 0) === 18, 'every bite counted');
 }
 
@@ -34,9 +33,13 @@ const feeder = { bite: k => k.live && (++k.bites >= 3 && (k.live = false), true)
     ok(flake(cory.b, { ...c, food: [piece(820, 300)] }) === null, 'cory ignores a falling piece');
     ok(flake(cory.b, { ...c, food: [piece(820, 880, { settled: true })] }) !== null, 'cory takes a settled piece');
     const tetra = fish(800, 300, 'tetra');
-    ok(flake(tetra.b, { ...ctx(tetra, [tetra]), food: [piece(1100, 880, { settled: true })] }) === null, 'mid feeder leaves far sand food');
-    ok(flake(tetra.b, { ...ctx(tetra, [tetra]), food: [piece(820, 600)] }) === null && flake(tetra.b, { ...ctx(tetra, [tetra]), food: [piece(820, 450)] }) !== null, 'mid feeder lets food sink past its band');
+    ok(flake(tetra.b, { ...ctx(tetra, [tetra]), food: [piece(900, 880, { settled: true })] }) === null, 'mid feeder leaves sand food');
+    ok(flake(tetra.b, { ...ctx(tetra, [tetra]), food: [piece(820, 600)] }) !== null, 'mid feeder follows sinking food down');
     ok(flake(tetra.b, { ...ctx(tetra, [tetra]), food: [piece(820, 300, { layer: 0 })] }) === null, 'other layer ignored');
+    ok(flake(tetra.b, { ...ctx(tetra, [tetra]), food: [piece(820, 500, { settled: true, perch: 2 })] }) !== null, 'mid feeder takes food on a rock');
+    const k = piece(820, 400, { claims: 1 });
+    tetra.b.food = k; tetra.b.foodBorn = k.born - 1;  // its old claim, then the pool reused the piece for another fish
+    ok(flake(tetra.b, { ...ctx(tetra, [tetra]), food: [k] }) === null, 'a reused piece is not still ours');
 }
 
 // startle ripple: a calm neighbour of a fleeing fish waits a beat before it bolts
@@ -113,5 +116,12 @@ for (const n of [0, 1]) {
     const t = fish(800, 450, 'tetra'), l = fish(880, 450, 'lionfish'), duo = [t, l];
     const it = think(t.b, ctx(t, duo));
     ok(it.ax === l.f.x && it.speed >= 1.2 || t.b.state !== 'idle', 'tetra keeps away from the lionfish');
+}
+// saved spots (store data): odd ones ignored, fractions clamped, a long absence moves at most 20 s, in bounds
+{
+    const f = makeFish({ x: 5, y: 5, cruise: 60, pad: 20 }, rand), now = 1e12;
+    ok(!resume(f, null, B, now) && !resume(f, { x: '0.5', y: 0.5, dir: 0, at: now }, B, now) && f.x === 5, 'odd spot ignored');
+    ok(resume(f, { x: 0.5, y: 0.5, dir: 0, at: now }, B, now) && f.x === 800 && f.y === 450, 'spot restored');
+    ok(resume(f, { x: 9, y: -3, dir: 1e9, at: 0 }, B, now) && f.x >= 20 && f.x <= 1580 && f.y >= 20 && f.y <= 880, 'clamped, capped, in bounds');
 }
 console.log('fish ok');

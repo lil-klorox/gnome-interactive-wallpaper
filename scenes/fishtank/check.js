@@ -171,7 +171,7 @@ const tankOf = () => {
     return { swimBounds: b, ground: (l, x, z) => l ? 774 + z * 72 : 700 + 10 * Math.sin(x / 100) + z * 20,
         tops: [{ x0: 1100, x1: 1200, y: 600 }], fishLayers: [actor(), actor()], mid: actor(), far: [actor(), actor(), actor()],
         spots: [], perches: [{ x: 300, y: 700 }, { x: 900, y: 690 }], plants: [{ x: 300, y: 780, h: 200 }], chain: () => [actor(), actor()],
-        ship: { hole: { x: 700, y: 760 }, actor: actor() } };
+        ship: { hole: { x: 700, y: 760 }, actor: actor() }, group: actor, shear() {} };
 };
 const ON = { jelly: true, gardenEels: true, moray: true, seahorse: true, shrimp: true, hermit: true, visitors: true };
 
@@ -192,16 +192,14 @@ const ys = dropped.filter(q => q.layer).map(q => q.y);
 ok(landed.size === 9 && new Set(dropped.map(q => q.layer)).size === 2, 'every piece lands, in both depths');
 ok(Math.max(...ys) - Math.min(...ys) > 15, 'near leftovers spread over the sand, not one line');
 ok(fallX < 60, `flakes rock in place, no runaway drift (${fallX | 0} px)`);
-food.drop(800, 840, 4);  // click on the front sand: food stays where it was dropped
-ok(food.pieces.filter(q => q.live && !q.settled).every(q => q.layer === 1 && q.z > 0.5), 'front-sand click drops near, low in the band');
-for (let i = 0; i < 5; i++) food.tick(dt);
-ok(food.pieces.filter(q => q.live && q.born >= 9).every(q => q.settled && q.y > 800), 'and it lies there, no jump up to the floor line');
+food.drop(800, 840, 4);  // a click on the sand, below the water: nothing
+ok(food._seq === 9, 'no food dropped below the water');
 food.farShare = 0;
 food.drop(400, 100, 6);
-ok(food.pieces.filter(q => q.live && q.born >= 13).every(q => q.layer === 1), 'no far fish: all food falls near');
+ok(food.pieces.filter(q => q.live && q.born >= 9).every(q => q.layer === 1), 'no far fish: all food falls near');
 // a piece over the rock top rests there, then slides off and falls on to the sand
 food.drop(1150, 400, 1);
-const pr = food.pieces.find(q => q.live && q.born === 19);
+const pr = food.pieces.find(q => q.live && q.born === 15);
 pr.x = 1150; pr.layer = 1; pr.kind = 3;
 let perched = false;
 for (let i = 0; i < 30 * 40; i++) { food.tick(dt); perched ||= pr.perch > 0 && pr.y === 600; }
@@ -237,13 +235,12 @@ ok(vis.V.length === 3 && crossed > 0 && vis.V.every(v => v.on || v.due > 0), 'vi
 const jel = cr.list.find(k => k.all?.[0]?.bell), mor = cr.list.find(k => k.M), eel = cr.list.find(k => k.all?.[0]?.mir);
 const b0 = tk.swimBounds;
 let jLow = 0, wentOut = false, home = false, maxSpots = 0, jSpot = null, sameSpot = true;
-mor.M.timer = 1;
 for (let i = 0; i < 30 * 600; i++) {
     cr.tick(dt, i * dt);
     for (const J of jel.all) { jLow = Math.max(jLow, J.y); ok(Number.isFinite(J.x + J.y) && J.y >= b0.y + 40, 'jelly in the water'); }
-    wentOut ||= mor.M.st === 'out' && mor.M.L > 100;
-    home ||= wentOut && mor.M.st === 'peek';
-    ok(Number.isFinite(mor.M.L + mor.M.x + mor.M.y) && mor.M.L >= 0, 'moray path sane');
+    wentOut ||= mor.M.st === 'linger' && mor.M.L > 100;
+    home ||= wentOut && mor.M.st === 'in';
+    ok(Number.isFinite(mor.M.L + mor.M.x + mor.M.y) && mor.M.L >= -62 && mor.M.L <= 170, 'moray path sane');
     maxSpots = Math.max(maxSpots, tk.spots.length);
     const js = jel.all[0].spot;
     sameSpot &&= !jSpot || js === jSpot;
@@ -263,7 +260,7 @@ ok(eel.all.every(E => E.st === 'out'), 'and they come back out');
 // shrimp and the hermit eat food lying on the front sand near them, never far-layer food
 tk.food.farShare = 1;
 tk.food.drop(tk.plants[0].x, 300, 3);  // falls in the far layer: left alone
-tk.food.drop(tk.plants[0].x, 790, 3);  // front sand by the shrimp
+tk.food.drop(tk.plants[0].x, 770, 3);  // just above the front sand by the shrimp
 for (let i = 0; i < 30 * 40; i++) { tk.food.tick(dt); cr.tick(dt, i * dt); }
 const fresh = tk.food.pieces.filter(q => q.born >= tk.food._seq - 6);
 ok(fresh.filter(q => q.layer === 0).every(q => q.bites === 0), 'far-layer food is not theirs');

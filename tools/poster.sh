@@ -1,7 +1,10 @@
 #!/bin/sh
 # Make scenes/<SCENE>/poster.jpg (noon) and poster-dark.jpg (23:00) from headless runs. While the
 # scene runs, the poster is GNOME's own wallpaper, so the lock screen, overview and workspace switch
-# show the scene instead of the default blue. Env: SCENE (fishtank), SIZE (3440x1440), SHOT (10 s).
+# show the scene instead of the default blue. The engine shows poster-dark.jpg while the scene's lights are
+# off. Scenery only (settings with a `still` value use it, e.g. no fish), so the live scene adds the
+# wildlife on top instead of moving it. SIZE=<your monitor> makes the overview line up pixel-exact.
+# Env: SCENE (fishtank), SIZE (3440x1440), SHOT (10 s).
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 scene=${SCENE:-fishtank} size=${SIZE:-3440x1440} shot=${SHOT:-10}

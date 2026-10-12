@@ -34,6 +34,7 @@ extension.js         lifecycle, mount per monitor, frame clock, pause, watchdog,
 shell.js             the ONLY private-API file (bg managers, background group, startup), each with a why-comment
 world.js             pure: makeWorld(), update(world, raw, dt), covers(rects, area)
 render.js            pure: parseManifest, scaleFor, bytesOf, frameOffset, BUDGET
+bend.js              pure: bendy many-sprite bodies (spacing, heading, shear, spring), see docs/writing-a-scene.md
 settings.js          pure: resolve/encode (scene settings), lightsAt, posterPlan
 ctx.js               image(), sheet(), store, settings — the only St.ImageContent code
 prefs.js             settings window: on/off, scene, then the scene's own rows built from its list
@@ -84,6 +85,8 @@ world = {                   // all coords monitor-local
   notifications,                       // monotonic count this session
   lightsOn, warm,                      // lights schedule; warm = within 45 min of an automatic switch
   ready,                               // true once this monitor's first textures decoded (or after 3 s)
+  gap,                                 // s since this monitor's last tick if over 1 s (paused, frozen,
+                                       // resting), else 0; the scene may move things on (cap it, e.g. 20 s)
 };
 
 ext.stats = {bytes, k, actors, tickMs /* EMA */, ticks /* monotonic */}  // Looking Glass + review
@@ -94,11 +97,15 @@ Store lives at `get_user_data_dir()/interactive-wallpaper/<id>.json`.
 ## Settings
 
 - Declared in `scenes/<id>/settings.js` as pure data: `export const SETTINGS = [{key, type, label,
-  group, default, min, max, step, choices: [[id, label]], rebuild}]`; types `bool | int | double |
-  choice | time` (time = minutes since midnight, 0..1439), plus read-only `log` ({path, kinds, max?, empty?}:
-  prefs reads the scene's store file and lists `{day, kind}` entries via `logLines()`, never writes it).
+  group, default, min, max, step, choices: [[id, label]], rebuild, still}]`; types `bool | int | double |
+  choice | time | action` (time = minutes since midnight, 0..1439; action = a button, value = how often
+  it was pressed, default 0, a press arrives as `onSettings([key])`, never with `rebuild`), plus read-only
+  `log` ({path, kinds, max?, empty?}: prefs reads the scene's store file and lists `{day, kind}` entries
+  via `logLines()`, never writes it). `still` = the value poster runs use (fish count 0, critters off).
+  "Reset to defaults" keeps action counts, so it doesn't press every button.
   Registered as `settings` in `scenes/index.js`.
 - Stored in ONE key, `scene-settings` = JSON `{sceneId: {key: value}}`, only non-default values.
+- Mark `rebuild` only for what `create` alone can do; counts and swaps belong in `onSettings`.
 - `settings.js resolve()` is the trust boundary: wrong type, out of range, unlisted choice or bad JSON
   → clamp or default, unknown keys dropped, never throws. `encode()` writes declared keys only and
   keeps other scenes' blocks. `check.js` also checks every registered default fits its own declaration.
@@ -119,8 +126,10 @@ Store lives at `get_user_data_dir()/interactive-wallpaper/<id>.json`.
 
 The lock screen, overview and workspace-switch animation each draw GNOME's own wallpaper with their
 own background actors, which our scene doesn't live in, and before a picture decodes GNOME paints its
-blue `primary-color`. So each scene can ship `poster.jpg` (+ optional `poster-dark.jpg` for dark
-style), a still of itself, and while it runs the host makes that GNOME's wallpaper:
+blue `primary-color`. So each scene can ship `poster.jpg` (lights on) + optional `poster-dark.jpg`
+(lights off), a still of its scenery without the wildlife, and while it runs the host makes the one
+that matches the scene's lights right now GNOME's wallpaper (both the light and dark style key). The
+live scene then adds the fish on top instead of moving them, and the light matches:
 - On load (before the scene mounts) `posterPlan()` saves the user's wallpaper keys once into
   `saved-background` (never one of our posters), then sets `picture-uri`, `-dark`, `picture-options`
   'zoom' and `primary-color` #031a26, each only when different.
@@ -133,7 +142,13 @@ style), a still of itself, and while it runs the host makes that GNOME's wallpap
 - The next start fixes a leftover: with `live` off, login and enable run the turn-off logic (a poster
   path that no longer exists still counts as ours). `make uninstall` puts the saved wallpaper back before
   removing the extension (`tools/restore-wallpaper.js`), because nothing of ours runs after that.
-- Made by `tools/poster.sh` from headless runs at noon and 23:00; an old poster is kept if the run fails.
+- Follows the lights: when `lights.on` flips, the other poster is set. The shell then puts a new bg
+  actor under the old one and fades the old one out over 1 s; the host moves the live scene into the
+  new actor and leaves a `Clutter.Clone` of it in the old one, so nothing visible changes and the scene
+  is never rebuilt. Picking another wallpaper does the same.
+- Made by `tools/poster.sh` from headless runs at noon and 23:00 with every `still` value applied; an
+  old poster is kept if the run fails. It only lines up pixel-exact in the overview when `SIZE` is the
+  monitor's own size (`zoom` crops otherwise); the lock screen blurs it anyway.
 
 ## Manifest (`scenes/<id>/assets/manifest.json`, the art contract)
 
@@ -190,7 +205,8 @@ style), a still of itself, and while it runs the host makes that GNOME's wallpap
   (`covers()`, so side-by-side tiles count). Monitor power saving is not watched: mutter 16 only
   signals that it changed and has no way to ask whether a monitor is off, so the screen shield (which
   comes up before the screens blank) is the signal. A monitor switched off by hand may keep ticking.
-  `dt` is clamped to 0.1 s and the clock restarts fresh, so a resume is one normal frame.
+  `dt` is clamped to 0.1 s, so a resume is one normal frame, and that tick's `world.gap` says how long
+  it was away (also after a watchdog rest or an unfreeze); the scene caps its own catch-up.
 - Sleepy ticks: a tick that returns `false` puts that monitor's scene to sleep; it is ticked every 0.2 s,
   or at once when pure `changed(raw, last)` (world.js) sees pointer/button/notification/lights/dark change,
   or on a restack, a drag or a settings change. Each monitor has its own `dt` (clamped 0.1 s awake,
@@ -250,5 +266,10 @@ Blender. `blender -b --factory-startup -P scenes/fishtank/blender/<script>.py`.
 
 OOP/WebKit/Godot host, user scene dir, scene.json, pub/sub bus, power-saver, sunrise math,
 MPRIS/weather, per-monitor scene picks, fish names, breeding/hunger, translations, eslint.
+Skipping single actors hidden under a window: Clutter still walks and culls every actor and the
+uncovered part animates anyway, so it saves a few quads a frame and freezes fish behind see-through
+windows; the whole-monitor pause (`covers()`) is the real saving. Staying enabled on the lock screen
+(`unlock-dialog` mode): e.g.o accepts it only when the extension can't work without it, and our Quick
+Settings tile would show there; the scene's own store keeps fish where they were instead.
 Pausing on a VT/user switch: the shell has no signal for it (needs our own logind proxy), and the
 screen shield or monitor power saving already covers the usual case.

@@ -3,11 +3,11 @@
 // Also the tank's ambient life (bubbles, motes, plants that bend when brushed) and the world the
 // fish read (fishLayers, swimBounds, sandY, perches, plants, spots, ship, food).
 import Clutter from 'gi://Clutter';
-import Graphene from 'gi://Graphene';
 import St from 'gi://St';
 import { Food } from './food.js';
 import { Critters, night, pt, rng } from './critters.js';
 import { drift } from './steer.js';
+import { shear, spring } from '../../bend.js';
 
 export { pt };  // fish.js reads manifest points through it
 
@@ -356,6 +356,15 @@ export class Tank {
         return segs;
     }
 
+    // An empty actor on top of parent (to group and clip sprites).
+    group(parent) {
+        const a = new Clutter.Actor();
+        parent.add_child(a);
+        return a;
+    }
+
+    shear(a, deg, py) { shear(a, deg, py); }  // critters reach it through the tank (stubbed in check.js)
+
     // Plant at ref (x, y) in a layer, swaying out of step with its neighbours. Returns the brush
     // record {x, y, h (screen px), bend, bv}: fish push bv, tick() springs bend back.
     _plant(parent, x, y, k, amp, species = null) {
@@ -367,20 +376,15 @@ export class Tank {
         holder.set_scale(mir, k);  // mirrored here, so every segment bends in the same (mirrored) space
         const segs = this.chain(holder, name);
         if (!segs) { holder.destroy(); return null; }
-        const s = this._s, n = segs.length, last = new Float64Array(n).fill(NaN), mtx = new Graphene.Matrix();
+        const s = this._s, n = segs.length, last = new Float64Array(n).fill(NaN);
         const p = { x: x * s, y: y * s, h: this._m[name].base[1] * k * s, bend: 0, bv: 0 };
-        // Each segment leans by a horizontal shear about its joint, not a rotation: a rotated band
-        // tilts its edge, so a wide leaf or the whole far half of the plant split open at the joint
-        // line. A shear keeps every band edge level, so the bands meet across the full width.
         const py = segs.map(a => { const y = a.pivot_point.y * a.height; a.set_pivot_point(0, 0); return y; });
         // 0.1 degree steps, set only on change (the bulk of the slow sway calls)
         p.sway = t => {
             for (let i = 0; i < n; i++) {
                 const v = Math.round(((i ? 0 : lean) + amp * (0.6 + 0.3 * i) * Math.sin(t * sp + ph - i * 0.6) +
                     p.bend * BEND_DEG / n * Math.sign(mir)) * 10) / 10;
-                if (v === last[i]) continue;
-                const tn = Math.tan((last[i] = v) * Math.PI / 180);
-                segs[i].set_transform(mtx.init_from_2d(1, 0, -tn, 1, tn * py[i], 0));
+                if (v !== last[i]) this.shear(segs[i], last[i] = v, py[i]);
             }
         };
         this._slow.push(p.sway);
@@ -562,9 +566,7 @@ export class Tank {
         }
         for (const p of this.plants) {  // brushed plants spring back, redrawn every tick while moving
             if (!p.bv && !p.bend) continue;
-            p.bend += p.bv * dt;
-            p.bv -= (p.bend * 12 + p.bv * 3) * dt;
-            if (Math.abs(p.bend) < 1e-3 && Math.abs(p.bv) < 1e-3) p.bend = p.bv = 0;
+            spring(p, dt);
             p.sway(t);
         }
         this.food.tick(dt, t);

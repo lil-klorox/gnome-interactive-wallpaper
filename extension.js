@@ -50,6 +50,7 @@ export default class InteractiveWallpaper extends Extension {
             grabbing: null, idleMs: 0, hour: 0, dark: false, notes: 0, lights: {on: true, warm: false}, area: null, event: true};
         this._prev = {};  // last values changed() compared against
         this._poke = false;  // a settings change wakes sleeping scenes
+        this._posterOn = true;  // lights.on the poster on screen was picked for
         this._settings = this.getSettings();
         this._bg = new Gio.Settings({schema_id: 'org.gnome.desktop.background'});
         this._iface = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
@@ -172,10 +173,13 @@ export default class InteractiveWallpaper extends Extension {
     }
 
     // Set the scene's poster as GNOME's wallpaper (id), or put the user's wallpaper back (null).
+    // The night poster (lights off) when the scene's lights are off, for both light and dark style.
     _wallpaper(id) {
         const scenes = this.dir.get_child('scenes'), file = n => scenes.get_child(id).get_child(n);
         const has = n => id && file(n).query_exists(null);
-        const poster = has('poster.jpg') ? {uri: file('poster.jpg').get_uri(), dark: has('poster-dark.jpg') ? file('poster-dark.jpg').get_uri() : null} : null;
+        this._posterOn = this._raw.lights.on;
+        const name = !this._posterOn && has('poster-dark.jpg') ? 'poster-dark.jpg' : 'poster.jpg';
+        const poster = has(name) ? {uri: file(name).get_uri()} : null;
         const cur = Object.fromEntries(BG.map(([k, key]) => [k, this._bg.get_string(key)]));
         const p = posterPlan(cur, this._settings.get_string('saved-background'), poster, `/${this.uuid}/scenes/`);
         if (p.save)
@@ -222,11 +226,12 @@ export default class InteractiveWallpaper extends Extension {
             const dir = this.dir.get_child('scenes').get_child(id);
             const man = loadManifest(dir);
             // Poster only once the scene is known to load. Its change makes the shell swap bg actors
-            // shortly after, which builds our tanks a second time (harmless, see _build).
-            this._wallpaper(id);
+            // shortly after; the tanks move across (see _build).
             this._nextMin = 0;
             this._scene = {id, dir, decl, man, k: 0, art: 0, canvas: 0, create: mod.default, crashes: 0, warned: false,
                 settings: resolve(decl, this._settings.get_string('scene-settings'), id)};
+            this._hour();  // the poster needs this scene's lights
+            this._wallpaper(id);
             this._rebuild();
         } catch (e) {
             logError(e, `interactive-wallpaper: scene ${id} failed to load`);
@@ -319,11 +324,17 @@ export default class InteractiveWallpaper extends Extension {
                 logError(e, `interactive-wallpaper: ${sc.id} teardown`);
             }
         });
-        // Wallpaper changed: shell swaps in a new bg actor, the old one fades out and dies.
+        // Wallpaper changed: the shell puts a new bg actor under the old one and fades the old one out.
+        // The live scene moves into the new one and a clone of it stays in the old one, so the fade
+        // shows the scene over itself instead of the old poster.
         mgr.connectObject('changed', () => {
-            root.destroy();
-            this._build(mgr, mon, i);
-            this._update();
+            const old = root.get_parent();
+            old?.remove_child(root);
+            mgr.backgroundActor.add_child(root);
+            if (t.world.ready) {  // a clone ignores the root's opacity, so never clone a half-loaded scene
+                root.opacity = 255;  // remove_child stopped any running fade-in
+                old?.add_child(new Clutter.Clone({source: root}));
+            }
         }, root);  // disconnected when root is destroyed
         mgr.backgroundActor.add_child(root);
         try {
@@ -366,6 +377,11 @@ export default class InteractiveWallpaper extends Extension {
     // (or everything, while `frozen`: the last frame stays on screen, once a tank has drawn one).
     _update() {
         const rects = [], lm = Main.layoutManager;
+        if (this._scene) {  // ponytail: poster follows the lights on ticks and window/overview changes only; a minute timer if a paused desktop lags
+            this._hour();
+            if (this._raw.lights.on !== this._posterOn)
+                this._wallpaper(this._scene.id);
+        }
         const unseen = Main.overview.visible || !!Main.screenShield?.active, frozen = this._settings.get_boolean('frozen');
         for (const w of global.workspace_manager.get_active_workspace().list_windows()) {
             if (!w.showing_on_its_workspace() || w.get_window_type() === Meta.WindowType.DESKTOP)
@@ -380,12 +396,10 @@ export default class InteractiveWallpaper extends Extension {
             if (!t || t.dead)
                 continue;
             // null mid-hotplug: restack/workareas fire before monitors-changed rebuilds us
-            const a = unseen ? null : lm.getWorkAreaForMonitor(t.mon.index), was = t.paused;
+            const a = unseen ? null : lm.getWorkAreaForMonitor(t.mon.index);
             if (a)
                 t.area = {x: a.x, y: a.y, w: a.width, h: a.height};
-            t.paused = (frozen && t.drawn) || !a || covers(rects, t.area);
-            if (was && !t.paused)
-                t.last = now();  // the first tick after a pause is one normal frame
+            t.paused = (frozen && t.drawn) || !a || covers(rects, t.area);  // the resume tick gets world.gap
             live ||= !t.paused;
         }
         if (live && !this._clock.is_playing()) {
@@ -398,7 +412,7 @@ export default class InteractiveWallpaper extends Extension {
 
     _fill() {
         // ponytail: get_pointer() returns a fresh 3-item array per tick; no non-allocating API exists.
-        const r = this._raw, [x, y, mods] = global.get_pointer(), s = this._scene.settings;
+        const r = this._raw, [x, y, mods] = global.get_pointer();
         const restacked = this._restacked;
         if (x !== r.px || y !== r.py || restacked)  // a stage pick is most of the host's tick
             r.bare = this._bare(x, y);
@@ -407,15 +421,9 @@ export default class InteractiveWallpaper extends Extension {
         r.py = y;
         r.down = !!(mods & Clutter.ModifierType.BUTTON1_MASK);
         r.idleMs = this._idle.get_idletime();
-        // Hour and lights change once a minute, so the Date is made once a minute (or after a clock jump back).
-        const ms = Date.now();
-        if (ms >= this._nextMin || ms < this._nextMin - 60000) {
-            const d = new Date(ms);
-            this._nextMin = ms - d.getSeconds() * 1000 - d.getMilliseconds() + 60000;
-            r.hour = d.getHours() + d.getMinutes() / 60;
-            // Reserved setting keys; a scene that doesn't declare them gets lights 06:00-21:00.
-            lightsAt(d.getHours() * 60 + d.getMinutes(), s.lights ?? 'auto', s.lightsOn ?? 360, s.lightsOff ?? 1260, r.lights);
-        }
+        this._hour();
+        if (r.lights.on !== this._posterOn)
+            this._wallpaper(this._scene.id);
         if (this._grab) {  // one rect per tick while a window is dragged
             const g = this._grab.get_frame_rect(), o = r.rects.find(q => q.id === r.grabbing);
             if (o)
@@ -424,6 +432,18 @@ export default class InteractiveWallpaper extends Extension {
         // Wakes sleeping scenes. changed() first: it must always copy the new values.
         r.event = changed(r, this._prev) || restacked || !!this._grab || this._poke;
         this._poke = false;
+    }
+
+    // Hour and lights change once a minute, so the Date is made once a minute (or after a clock jump back).
+    _hour() {
+        const r = this._raw, s = this._scene.settings, ms = Date.now();
+        if (ms < this._nextMin && ms >= this._nextMin - 60000)
+            return;
+        const d = new Date(ms);
+        this._nextMin = ms - d.getSeconds() * 1000 - d.getMilliseconds() + 60000;
+        r.hour = d.getHours() + d.getMinutes() / 60;
+        // Reserved setting keys; a scene that doesn't declare them gets lights 06:00-21:00.
+        lightsAt(d.getHours() * 60 + d.getMinutes(), s.lights ?? 'auto', s.lightsOn ?? 360, s.lightsOff ?? 1260, r.lights);
     }
 
     _tick() {
@@ -451,7 +471,9 @@ export default class InteractiveWallpaper extends Extension {
                 live = true;
                 continue;
             }
-            const dt = Math.min(t0 - t.last, t.wake ? 0.3 : 0.1);  // a 5 Hz sleeper sees its real dt
+            const gap = t0 - t.last;  // over 1 s = it was paused, resting or frozen; the scene may catch up
+            t.world.gap = gap > 1 ? gap : 0;
+            const dt = Math.min(gap, t.wake ? 0.3 : 0.1);  // a 5 Hz sleeper sees its real dt
             t.last = t0;
             raw.area = t.area;
             raw.mx = t.mon.x;

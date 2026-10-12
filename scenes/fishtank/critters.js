@@ -3,6 +3,7 @@
 // Each is {tick(dt, t)}; missing or misshapen art skips that critter (logged once). Positions are
 // screen px in the fish layers, ref px in the scaled mid/far layers.
 import { FAST, SEE } from './brain.js';
+import { heading, spacing } from '../../bend.js';
 
 const TAU = Math.PI * 2;
 const WALL = 120;          // px from the side glass where a jelly starts turning back
@@ -14,8 +15,6 @@ export const pt = p => Array.isArray(p) && p.length === 2 && p.every(Number.isFi
 export const night = W => W.lightsOn === undefined ? W.hour >= 21 || W.hour < 6 : !W.lightsOn;
 const ease = (v, goal, dt, tau) => v + (goal - v) * (1 - Math.exp(-dt / tau));
 const deg = r => r * 180 / Math.PI;
-// Head-on angle for a profile sprite facing +x travelling (dx, dy): mirrored when going left.
-const heading = (dx, dy) => dx >= 0 ? deg(Math.atan2(dy, dx)) : deg(Math.atan2(-dy, -dx));
 // Seeded random numbers (same seed, same sequence).
 export const rng = seed => () => (seed = seed * 16807 % 2147483647) / 2147483647;
 
@@ -197,7 +196,9 @@ function jellies(c) {
             const segs = c.tank.chain(par, tents[j % tents.length], k, k);
             if (!segs) continue;
             for (const [i, a] of segs.entries()) (i + 1 < segs.length ? a.get_first_child() : a).set_opacity(op);  // texture actors only
-            strips.push({ segs, a: new Float64Array(segs.length), dx: (j - 1.5) * 7, last: new Float64Array(segs.length).fill(NaN), sy: NaN, tx: NaN, ty: NaN });
+            // past the root, segments lean by tank.shear about their joint row (a rotation split wide strips there)
+            const py = segs.map((a, i) => { if (!i) return 0; const y = a.pivot_point.y * a.height; a.set_pivot_point(0, 0); return y; });
+            strips.push({ segs, py, a: new Float64Array(segs.length), dx: (j - 1.5) * 7, last: new Float64Array(segs.length).fill(NaN), sy: NaN, tx: NaN, ty: NaN });
         }
         const bell = new Sprite(sh, par, 'anchor', op);
         all.push({ layer, far, k, glow, strips, bell, g: 0, ph: c.rand(), f: -1, i: layer,
@@ -237,7 +238,9 @@ function jellies(c) {
                     if (sy !== S.sy) root.set_scale(J.k, J.k * (S.sy = sy));
                     for (let i = 0; i < S.segs.length; i++) {
                         const r = Math.round(((i ? 0 : 180) + deg(S.a[i] - (i ? S.a[i - 1] : 0))) * 10) / 10;
-                        if (r !== S.last[i]) S.segs[i].set_rotation_angle(2, S.last[i] = r);
+                        if (r === S.last[i]) continue;
+                        if (i) c.tank.shear(S.segs[i], S.last[i] = r, S.py[i]);
+                        else root.set_rotation_angle(2, S.last[i] = r);  // the root flips under the bell: a turn, not a lean
                     }
                 }
                 if (J.glow) {
@@ -291,92 +294,67 @@ function eels(c) {
     };
 }
 
-// Moray in the wreck: peeks from the hole breathing, sometimes slides out along an S-curve and back
-// in the way it came. The body is a path from the hole: segment k sits a fixed distance behind the
-// head along it, so going back in is just the head's distance shrinking.
+// Moray in the wreck: slides out of its hole (a random side each time), lingers there swaying and
+// breathing, and slides back in; a threat sends it back in fast. The body is one smooth curve out of
+// the hole: head, 10 overlapping segments and the tail sit along it by distance from the hole, and a
+// clip at the hole's plane cuts them, so it slides in and out instead of popping or fading.
 function moray(c) {
     const head = c.sheet('moray_head', 6, 6, ['anchor']), segSh = c.still('moray_seg'), tailSh = c.still('moray_tail', ['anchor']);
     if (!head || !segSh || !tailSh) return null;
     const mid = c.tank.mid, hx = c.tank.ship.hole.x / c.s, hy = c.tank.ship.hole.y / c.s, ship = c.tank.ship.actor;
-    const NSEG = 10, sp = segSh.w * 0.9, MAXP = 64;
-    const mk = (sh, key) => {
-        const s = new Sprite(sh, mid, key);
-        if (ship) mid.set_child_above_sibling(s.a, ship);
-        s.show(false);
-        return s;
+    // the seg art fades 21 % of its width at each end; HL: snout ahead of the head's anchor
+    const NSEG = 10, sp = spacing(segSh.w, 0.21), HL = head.w - head.anchor[0];
+    const box = c.tank.group(mid);  // clipped at the hole plane, just above the ship
+    if (ship) mid.set_child_above_sibling(box, ship);
+    // later children paint on top: tail under the body, head on top
+    const tail = new Sprite(tailSh, box), segs = [];
+    for (let k = 0; k < NSEG; k++) segs.unshift(new Sprite(segSh, box));
+    const H = new Sprite(head, box);
+    // Lmax = how far it comes out: the tail root (L - 10 sp) stays at the hole, so it never floats free
+    const M = { st: 'in', timer: 2 + 4 * c.rand(), face: 1, L: -HL, Lmax: 120, v: 30, lt: 0, ph: 0, yawn: 0, x: hx, y: hy, side: 0 };
+    c.events.yawn = age => age > 120 ? null : (M.yawn = 2, M.st === 'in' && (M.timer = 0), hx);  // a big slow gape, next time it is out
+    // the curve: rises gently from the hole with a wave that is still at the hole and grows along the body
+    const Y = d => hy - 0.25 * d + 10 * Math.min(1, Math.max(0, d) / 60) * Math.sin(d / 40 + M.ph);
+    const place = (s, f, d, back) => {  // back: the tail points back into the hole
+        const dy = (Y(d + 1) - Y(d - 1)) * (back ? -1 : 1), dx = 2 * (back ? -M.face : M.face);
+        s.put(f, hx + M.face * d, Y(d), dx >= 0 ? 1 : -1, 1, heading(dx, dy));
     };
-    // each goes just above the ship, so the last made is lowest: head on top, then the body, tail under
-    const H = mk(head, 'anchor'), segs = [];
-    for (let k = 0; k < NSEG; k++) segs.push(mk(segSh, 'anchor'));
-    const tail = mk(tailSh, 'anchor');
-    const P = new Float64Array(MAXP * 2), C = new Float64Array(MAXP), xy = new Float64Array(4), hp = new Float64Array(4);
-    const M = { st: 'peek', timer: 30 + 60 * c.rand(), face: 1, n: 1, L: 0, x: hx, y: hy, dir: 0, v: 30, yawn: 0, op: 1 };
-    c.events.yawn = age => age > 120 ? null : (M.yawn = 2, hx);  // a big slow gape, next time it is at the hole
-    P[0] = hx; P[1] = hy;
-    // point and unit tangent at arc length d along the path (clamped to its ends)
-    const at = d => {
-        let j = 0;
-        while (j < M.n - 2 && C[j + 1] < d) j++;
-        const ax = P[j * 2], ay = P[j * 2 + 1];
-        const bx = j + 1 < M.n ? P[j * 2 + 2] : M.x, by = j + 1 < M.n ? P[j * 2 + 3] : M.y;
-        const len = Math.hypot(bx - ax, by - ay) || 1, u = Math.min(1, Math.max(0, (d - C[j]) / len));
-        xy[0] = ax + (bx - ax) * u; xy[1] = ay + (by - ay) * u; xy[2] = (bx - ax) / len; xy[3] = (by - ay) / len;
-        return xy;
+    const side = () => {  // pick a side and how far out; the clip opens on that side of the hole
+        M.face = c.rand() < 0.5 ? -1 : 1;
+        M.Lmax = 20 + 150 * c.rand();
+        if (M.side !== M.face) box.set_clip(M.face > 0 ? hx : hx - 400, hy - 220, 400, 320);
+        M.side = M.face;
     };
+    side();
     return {
         M,
         tick(dt, t) {
-            const act = c.act(), scared = c.threat(M.x * c.s, M.y * c.s);
-            if (M.st === 'peek') {
-                if (scared) { M.st = 'hide'; M.timer = 5 + 5 * c.rand(); }
-                else if ((M.timer -= dt * act) <= 0) {
-                    M.st = 'out'; M.timer = 8 + 4 * c.rand(); M.n = 1; M.x = hx; M.y = hy; M.L = 0;
-                    M.dir = M.face > 0 ? -0.25 : Math.PI + 0.25;
-                }
-            } else if (M.st === 'hide') {
-                if ((M.timer -= dt) <= 0) { M.st = 'peek'; M.timer = (60 + 120 * c.rand()) / act; M.face = c.rand() < 0.5 ? -1 : 1; }
+            const act = c.act(), L0 = M.L;
+            if (M.st !== 'in' && M.st !== 'back' && c.threat(M.x * c.s, M.y * c.s)) { M.st = 'back'; M.v = 150; }  // a flinch
+            if (M.st === 'in') {
+                if ((M.timer -= dt * act) <= 0) { side(); M.st = 'out'; }
             } else if (M.st === 'out') {
-                M.dir += 1.2 * Math.sin(t * 0.9) * dt;
-                const gx = hx + M.face * 160, gy = hy - 70;  // stay near the wreck, off the sand
-                if (Math.hypot(M.x - gx, M.y - gy) > 140 || M.y > hy + 20) {
-                    const want = Math.atan2(gy - M.y, gx - M.x);
-                    M.dir += Math.atan2(Math.sin(want - M.dir), Math.cos(want - M.dir)) * Math.min(1, 1.5 * dt);
-                }
-                M.x += Math.cos(M.dir) * 25 * act * dt;
-                M.y += Math.sin(M.dir) * 25 * act * dt;
-                const lx = P[M.n * 2 - 2], ly = P[M.n * 2 - 1], d = Math.hypot(M.x - lx, M.y - ly);
-                if (d >= 6 && M.n < MAXP) { P[M.n * 2] = M.x; P[M.n * 2 + 1] = M.y; C[M.n] = C[M.n - 1] + d; M.n++; }
-                M.L = C[M.n - 1] + Math.hypot(M.x - P[M.n * 2 - 2], M.y - P[M.n * 2 - 1]);
-                if (scared || (M.timer -= dt) <= 0 || M.n >= MAXP) { M.st = 'return'; M.v = scared ? 60 : 30; }
-            } else {  // return: back in along its own path
-                if (scared) M.v = 60;
-                M.L -= M.v * act * dt;
-                if (M.L <= 0) { M.st = 'peek'; M.L = 0; M.n = 1; M.x = hx; M.y = hy; M.timer = (60 + 120 * c.rand()) / act; }
+                if ((M.L += 25 * act * dt) >= M.Lmax) { M.L = M.Lmax; M.st = 'linger'; M.lt = 0; M.timer = 6 + 14 * c.rand(); }
+            } else if (M.st === 'linger') {  // eases in and out a little while it waves
+                M.L = M.Lmax - 8 * (1 - Math.cos(0.7 * (M.lt += dt)));
+                if ((M.timer -= dt) <= 0) { M.st = 'back'; M.v = Math.max(10, 30 * act); }
+            } else if ((M.L -= M.v * dt) <= -HL) { M.L = -HL; M.st = 'in'; M.timer = 15 + 45 * c.rand(); }
+            // the wave runs back along the body as it slides out, forward as it backs in
+            M.ph += 2 * Math.sign(M.L - L0) * dt + (M.st === 'linger' ? 0.8 * dt : 0);
+            const L = M.L;
+            M.x = hx + M.face * L; M.y = Y(L);
+            // a sprite is hidden only once it is wholly behind the hole plane (the clip cuts the rest)
+            H.show(L > -HL);
+            if (L > -HL) {
+                const yawn = M.yawn > 0 && L > 0 && (M.yawn -= dt) > 0;
+                place(H, yawn ? 5 : Math.min(5, Math.max(0, Math.round((M.st === 'linger' ? 3 : 1) + 2 * Math.sin(t * TAU * 0.5)))), L);
+                if (L > 0) c.spot(M, M.x * c.s, M.y * c.s);
             }
-            if (M.st === 'peek') {  // head at the hole, breathing (or the daily yawn: mouth wide for 2 s)
-                if (M.op < 1) H.fade(255 * (M.op = Math.min(1, M.op + dt * 3)));  // back out of the dark after a hide
-                const yawn = M.yawn > 0 && (M.yawn -= dt) > 0;
-                H.put(yawn ? 5 : Math.min(5, Math.max(0, Math.round(3 + 2.5 * Math.sin(t * TAU * 0.5)))), hx, hy, M.face, 1, 0);
-                if (yawn) c.spot(M, hx * c.s, hy * c.s);
-                for (const s of segs) s.show(false);
-                tail.show(false);
-                return;
-            }
-            if (M.st === 'hide') {  // bug fix: hid in one frame (a snap); now a quick fade back into the hole
-                if ((M.op = Math.max(0, M.op - dt * 5)) > 0) H.fade(255 * M.op); else H.show(false);
-                return;
-            }
-            if (M.st === 'out') { hp[0] = M.x; hp[1] = M.y; hp[2] = Math.cos(M.dir); hp[3] = Math.sin(M.dir); } else hp.set(at(M.L));
-            const p = hp;
-            const gape = Math.min(5, Math.max(0, Math.round(1 + 1.5 * Math.sin(t * TAU * 0.5))));
-            H.put(gape, p[0], p[1], p[2] >= 0 ? 1 : -1, 1, heading(p[2], p[3]));
             for (let k = 0; k <= NSEG; k++) {
-                const d = M.L - sp * (k + 0.5), s = k < NSEG ? segs[k] : tail;
-                if (d <= 0) { s.show(false); continue; }
-                const q = at(d);
-                s.put(0, q[0], q[1], q[2] >= 0 ? 1 : -1, 1, heading(q[2], q[3]));
+                const s = k < NSEG ? segs[k] : tail, d = L - sp * Math.min(k + 0.5, NSEG);  // the tail tucks under the last segment
+                if (k < NSEG ? d < -segSh.w / 2 : d < 0) s.show(false);
+                else place(s, 0, d, k === NSEG);
             }
-            if (M.st === 'out') c.spot(M, M.x * c.s, M.y * c.s);
         },
     };
 }

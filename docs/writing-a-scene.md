@@ -31,6 +31,7 @@ What `ctx` gives you:
 | `world.lightsOn`, `warm` | whether the lights are on right now, and whether it's dawn/dusk (see Lights) |
 | `world.notifications` | a count that goes up by one per notification; compare it to last tick |
 | `world.ready` | turns true once your first pictures have loaded |
+| `world.gap` | on the first tick after a pause (window covering the screen, overview, freeze) the seconds it was away (over 1 s), else 0 |
 | `image(name, fallback)`, `sheet(name, fallback)` | art from `assets/` (see Art and Fallback art) |
 | `ref`, `images` | the screen height your art was drawn for, and the manifest entries |
 | `settings`, `onSettings(fn)` | your scene's settings and a way to hear when they change (see Settings) |
@@ -97,12 +98,31 @@ saved in its store, newest first, up to 7 (or `max`):
 unknown kind or a bad day are skipped. The settings window reads your store file but never writes it,
 and a `log` row has no value in `ctx.settings`.
 
+An `action` row is a button, for things like "smooth all the sand":
+
+```js
+{key: 'resetSand', type: 'action', label: 'Smooth all the sand', group: 'Rake', default: 0},
+```
+
+Its value is how many times the button was pressed. Each press reaches your scene as an ordinary
+change, so check for it with `keys.includes('resetSand')` in `onSettings` (other keys may come in
+the same call). It never rebuilds the scene, and "Reset to defaults" leaves it alone.
+
 In your scene, `ctx.settings.size` is always a valid value: a wrong type, a number out of range or a
 choice that isn't listed falls back to the default before your scene ever sees it. When someone
 changes a setting, `ctx.settings` updates in place and your `ctx.onSettings(keys => ...)` runs with
 the keys that changed. If a setting is only read in `create` (like how many fish there are, or the
-dot's size), mark it `rebuild: true` and the engine simply builds your scene again instead. Use the
-plainest label you can and keep the list short.
+dot's size), mark it `rebuild: true` and the engine simply builds your scene again instead. A
+rebuild loses whatever was moving, so use it only for what `create` alone can do: adding or removing
+a fish, or swapping one prop for another, is nicer in `onSettings`. Use the plainest label you can
+and keep the list short.
+
+A setting can also say `still: <value>`: the value used when the poster is made (below), for example
+`still: 0` on a fish count or `still: false` on a critter, so the poster shows only the scenery.
+
+When your scene was paused, the first tick back has `world.gap` set to how many seconds it was away
+(else 0). The engine never fakes the missed ticks; if you want things to have moved meanwhile, jump
+them forward once, and cap it (say 20 s of travel) so an hour away doesn't fling everything around.
 
 ## Lights
 
@@ -125,13 +145,15 @@ always on.
 
 The lock screen, the overview and the workspace-switch animation can't show a live scene; they
 show GNOME's normal wallpaper. So a scene can ship a still picture of itself, `scenes/<id>/poster.jpg`
-(plus an optional `poster-dark.jpg`, used when dark style is on). While your scene runs, the engine
-makes the poster GNOME's wallpaper, and when the live wallpaper is turned off it puts the user's own
-wallpaper back. The poster also shows for the moment while your pictures load, so add one only if
+(plus an optional `poster-dark.jpg`, used while your scene's lights are off). While your scene runs,
+the engine makes the poster GNOME's wallpaper and swaps it when the lights switch, and when the live
+wallpaper is turned off it puts the user's own wallpaper back. The poster has no wildlife (see `still`),
+so when the live scene comes back the fish appear on top of the same scenery instead of jumping. The poster also shows for the moment while your pictures load, so add one only if
 your scene paints the whole screen (that's why the dot has a plain backdrop).
 
 Make it with `SCENE=<id> tools/poster.sh`: it runs your scene in a hidden test shell at noon and at
-23:00 and saves both pictures (use `SIZE=WxH` for a smaller one; the dot's is 860x360). Nothing goes
+23:00 and saves both pictures (use `SIZE=WxH` for a smaller one; the dot's is 860x360, and your
+monitor's own size makes the overview line up exactly). Nothing goes
 in the registry; the engine just looks for the files.
 
 ## Fallback art
@@ -183,6 +205,33 @@ so keep your own state (a height map, say) and turn it into colours inside `fill
 takes well under a millisecond to send. Its memory (every tile, `tile × tile × 4` bytes) counts
 toward the scene's 100 MB budget; a canvas that doesn't fit makes `canvas()` throw, which stops the
 scene like any other error. It's freed with `ctx.root`.
+
+## Bendy bodies
+
+A plant, a tail, a rope or an eel is easiest to draw as a row of pieces, each a sprite, that bend
+one after another. `bend.js` in the engine has the four small helpers that keep such a row looking
+like one smooth body instead of a stack of blocks:
+
+```js
+import {spacing, heading, shear, spring} from '../../bend.js';
+
+const gap = spacing(seg.w, 0.2);       // pieces whose art fades out over 20 % at each end
+piece.set_pivot_point(0, 0);           // shear replaces the piece's own move/rotate/mirror, so do those on its parent
+shear(piece, 12, jointY);              // lean 12° about the joint row jointY (px from the piece's top)
+sprite.set_rotation_angle(Clutter.RotateAxis.Z_AXIS, heading(dx, dy));
+sprite.set_scale(dx < 0 ? -1 : 1, 1);  // going left: mirror it, same angle
+const p = {bend: 0, bv: 0};            // something brushes it: p.bv += push
+spring(p, dt, {limit: 1, maxSpeed: 4, stiff: 12, damp: 3});   // every tick; lean = p.bend * your max angle
+```
+
+Three rules sit behind them. Soft edges overlap: if each piece's art fades out at both ends, place
+the pieces `spacing(width, fade)` apart so the fades overlap and no seam shows. Shear, don't rotate:
+a rotated piece tilts its edge, so a wide piece splits open at the joint; `shear` slides its rows
+sideways instead, so the edges stay level and meet across the full width. Clamp the bend: pushes add
+up, and without a limit a plant brushed over and over leans flat and its art stretches out sideways,
+so `spring` holds the bend to ±`limit` and its speed to ±`maxSpeed` (the defaults are the ones shown).
+One catch with mirrored sprites: Clutter mirrors after it rotates, so keep the angle `heading` gives
+and only flip the scale. The fishtank's plants, jellyfish tentacles and moray all use these.
 
 ## Rules the engine enforces
 

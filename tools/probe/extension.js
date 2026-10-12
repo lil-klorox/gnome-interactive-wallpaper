@@ -1,6 +1,6 @@
 // Dev-only driver for `dev.sh --headless`: hides the overview, moves a virtual cursor, raises a
 // notification, cycles the target extension off/on, freezes it for a moment, takes screenshots and writes $OUT/stats.txt.
-// POSTER=1: hide the top bar, take only s0.png at SHOT seconds (default 4), nothing else.
+// POSTER=1: set every `still` setting value, hide the top bar, take only s0.png at SHOT seconds (default 4), nothing else.
 // RACE=1: lifecycle races (disable mid-decode, double scene switch, 3 monitors-changed in one tick,
 // lock/unlock), then one `race ok` / `race FAIL ...` line: no JS errors, one root per bg actor,
 // same actor count as a fresh build, poster still the wallpaper. Needs secs >= 14.
@@ -57,6 +57,7 @@ export default class Probe {
         // 0.5 s steps
         GLib.timeout_add(0, 500, () => {
             i++;
+            if (poster && i === 2) this._still(em.lookup(uuid), note);
             if (i === 4) Main.overview.hide();
             if (poster && i === shotAt - 1) Main.layoutManager.panelBox.hide();
             if (i === shotAt) shot(0);
@@ -91,6 +92,19 @@ export default class Probe {
             if (secs >= 80 && i === 2 * (secs - 4)) rate('idle', idle);
             return i < 2 * secs;
         });
+    }
+
+    // Poster runs: the scene's settings with a `still` value use it (fish counts 0, critters off).
+    async _still(ext, note) {
+        try {
+            const {SCENES} = await import(ext.dir.get_child('scenes').get_child('index.js').get_uri());
+            const set = ext.stateObj.getSettings(), id = set.get_string('scene');
+            const vals = Object.fromEntries((SCENES[id]?.settings ?? []).filter(d => 'still' in d).map(d => [d.key, d.still]));
+            set.set_string('scene-settings', JSON.stringify({[id]: vals}));
+            note(`still ${Object.keys(vals).join() || 'none'}`);
+        } catch (e) {
+            note(`still FAIL ${e.message}`);
+        }
     }
 
     // 0.1 s steps; the shell is up and the scene mounted by step 40.
@@ -129,11 +143,12 @@ export default class Probe {
                 const kids = (Main.layoutManager._bgManagers ?? []).map(m => m.backgroundActor.get_n_children());
                 if (!kids.length || kids.some(n => n !== 1)) fail.push(`bg children ${kids}`);
                 if (stats()?.actors !== base) fail.push(`actors ${stats()?.actors} vs fresh ${base}`);
-                const poster = ext().dir.get_child('scenes').get_child(first).get_child('poster.jpg');
+                const dir = ext().dir.get_child('scenes').get_child(first), poster = dir.get_child('poster.jpg');
                 const uri = new Gio.Settings({schema_id: 'org.gnome.desktop.background'}).get_string('picture-uri');
-                if (poster.query_exists(null) ? uri !== poster.get_uri() : uri.includes(`/${uuid}/scenes/`))
+                const ours = [poster, dir.get_child('poster-dark.jpg')].map(f => f.get_uri());  // day or night poster
+                if (poster.query_exists(null) ? !ours.includes(uri) : uri.includes(`/${uuid}/scenes/`))
                     fail.push(`picture-uri ${uri}`);
-                note(fail.length ? `race FAIL ${fail.join('; ')}` : `race ok (scene ${first}, actors ${base})`);
+                note(fail.length ? `race FAIL ${fail.join('; ')}` : `race ok (scene ${first}, actors ${base}, ${uri.split('/').pop()})`);
             }
             return i < 130;
         });

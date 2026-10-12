@@ -70,7 +70,7 @@ export default function create(ctx) {
         S.lines(F);
     S.grow(bb, 0, 0, F.cw, F.ch);
 
-    const props = layer(), placed = [];  // stones and lantern, drawn top to bottom so lower ones overlap
+    const props = layer(), placed = [], feet = [];  // stones and lantern, drawn top to bottom so lower ones overlap
     for (let i = 0; i < set.stones; i++) {
         const name = img[`stone-${i + 1}`] ? `stone-${i + 1}` : 'stone-1', e = art(name);
         if (e)
@@ -86,8 +86,10 @@ export default function create(ctx) {
             actor(props, p.moss, ...at(p.moss, p.x + p.side * (p.e.foot?.[2] ?? p.e.w) * 0.32 * s, p.y + 6 * s));
         actor(props, p.e, x, y);
         const r = footRect(p.e, x, y);
-        if (r)
+        if (r) {
+            feet.push(r);
             S.ring(F, r, all, bb, true);
+        }
         const g = p.e === lantern && Array.isArray(lantern.light) && art('glow');
         if (g) {
             const gs = 3 * s;  // a wide, soft pool so the lantern itself stays readable
@@ -137,6 +139,9 @@ export default function create(ctx) {
 
     // Saved garden: replay strokes (scaled to this screen size), each as deep as its age leaves it.
     let strokes = [];
+    const saved = ctx.store.get();
+    if ((saved.smoothed ?? 0) !== set.resetSand)  // Smooth was pressed while no garden was running
+        ctx.store.set(S.fit({...saved, mons: {}, smoothed: set.resetSand}));
     const slot = idx < S.MAX_MONS ? S.readSlot(ctx.store.get().mons?.[idx]) : null;
     const t0 = now(), hours = () => set.settle;
     if (slot) {
@@ -176,6 +181,7 @@ export default function create(ctx) {
     cv.dirty(bb.x0, bb.y0, bb.x1, bb.y1);  // stone rings and the replayed strokes
     let notes = world.notifications, wasDown = world.pointer.down, held = false, cur = null, lastSave = 0, saveAt = 0;
     let lastSettle = t0, n = 0, first = true;
+    const shown = world.ready;  // already on screen (a settings rebuild): paint it all in the first tick, no visible fill
     const stroke = S.makeStroke(), stamped = new Map(), troughs = new Map();
     const save = () => {
         saveAt = 0;
@@ -184,7 +190,7 @@ export default function create(ctx) {
             return;
         const lv = resting().map(l => [Math.round(l.x), Math.round(l.y), l.f]);
         const data = ctx.store.get();
-        ctx.store.set(S.fit({...data, mons: {...data.mons, [idx]: S.writeSlot(strokes, lv, w, h, lastSave)}}));
+        ctx.store.set(S.fit({...data, smoothed: set.resetSand, mons: {...data.mons, [idx]: S.writeSlot(strokes, lv, w, h, lastSave)}}));
     };
     const later = t => (saveAt = Math.max(t + SAVE_AFTER, lastSave + SAVE_GAP));
 
@@ -231,6 +237,18 @@ export default function create(ctx) {
     ctx.onSettings(keys => {
         if (keys.includes('teeth'))
             R = S.profile(set.teeth);
+        if (keys.includes('resetSand')) {  // back to a freshly made garden; leaves stay
+            stroke.on = held = false;
+            cur = null;
+            strokes.length = 0;
+            troughs.clear();
+            stamped.clear();  // windows get their rings raked again
+            S.scale(F, 0, 0, F.cw, F.ch, 0);
+            for (const r of feet)
+                S.ring(F, r, all, bb, true);
+            cv.dirty(0, 0, F.cw, F.ch);
+            save();
+        }
     });
 
     return {
@@ -378,7 +396,7 @@ export default function create(ctx) {
 
             if (bb.x1 > bb.x0)
                 cv.dirty(bb.x0, bb.y0, bb.x1, bb.y1);
-            const left = cv.flush(fill, first ? FIRST_TILES : TILES);
+            const left = cv.flush(fill, first ? (shown ? Infinity : FIRST_TILES) : TILES);
             first &&= left > 0;
             if (saveAt && t >= saveAt)
                 save();

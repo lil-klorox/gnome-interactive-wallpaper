@@ -37,7 +37,6 @@ export class Food {
         this._tank = tank;
         this._rand = rand;
         this._s = ctx.h / ctx.ref;
-        this._h = ctx.h;
         this.any = false;
         this.farShare = 0.4;  // chance a piece falls in the far layer; scene.js sets it to the far fish share
         this.pieces = [];
@@ -73,10 +72,11 @@ export class Food {
         }
     }
 
-    // n pieces around (x, y); when the pool is full the oldest settled piece is reused. A click on the
-    // front sand drops them right there, in the near layer.
+    // n pieces around (x, y); when the pool is full the oldest settled piece is reused. A click below the
+    // water (on the sand) drops nothing: food starts in the water and sinks.
     drop(x, y, n) {
         const r = this._rand, b = this._tank.swimBounds, T = this._tank;
+        if (y > b.y + b.h) return;
         for (let j = 0; j < n; j++) {
             let p = null;
             for (const q of this.pieces) if (!q.live) { p = q; break; }
@@ -86,11 +86,9 @@ export class Food {
             }
             const i = this.pieces.indexOf(p), kind = Math.min(KINDS - 1, r() * KINDS | 0);
             p.x = x + (r() - 0.5) * 80;
-            p.y = Math.max(b.y * 0.5, y + (r() - 0.5) * 30);
-            const y0 = T.ground(1, p.x, 0), y1 = T.ground(1, p.x, 1);
-            const onSand = p.y > y0;
-            p.layer = onSand || r() >= this.farShare ? 1 : 0;
-            p.z = onSand ? Math.min((this._h - 4 - y0) / Math.max(1, y1 - y0), (p.y - y0) / Math.max(1, y1 - y0)) : r();
+            p.y = Math.min(b.y + b.h, Math.max(b.y * 0.5, y + (r() - 0.5) * 30));
+            p.z = r();
+            p.layer = r() < this.farShare && p.y < T.ground(0, p.x, p.z) ? 0 : 1;  // never starts below its floor
             Object.assign(p, { live: true, kind, size: 0.6 + r() * 0.6, bites: 0, settled: false, fade: 0, age: 0, claims: 0,
                 born: this._seq++, vy: 0, phi: r() * TAU, w: kind === 3 ? 0.8 : 2.5 + 2 * r(), perch: 0, top: -1, slid: false });
             this._kx[i] = 0;

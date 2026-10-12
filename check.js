@@ -1,6 +1,7 @@
 import Gio from 'gi://Gio';
 // `gjs -m check.js`: host math, then every scene's own check.
 import {parseManifest, scaleFor, bytesOf, frameOffset, maxHeight, canvasBytes, tileRange, BUDGET} from './render.js';
+import {spacing, heading, shear, spring} from './bend.js';
 import {makeWorld, update, covers, changed} from './world.js';
 import {resolve, encode, lightsAt, posterPlan, logLines, POSTER_COLOR} from './settings.js';
 import {SCENES} from './scenes/index.js';
@@ -24,6 +25,20 @@ ok(canvasBytes(1000, 700, 256) === 4 * 3 * 256 * 256 * 4, 'canvas: 1000x700 / 25
 ok(String(tileRange(255, 0, 257, 1, 256, 4, 3)) === '0,0,2,1', 'dirty across a tile edge touches exactly two tiles');
 ok(String(tileRange(-50, -5, 9999, 9999, 256, 4, 3)) === '0,0,4,3' && tileRange(-9, 0, -1, 5, 256, 4, 3)[2] === 0, 'dirty clamps; off-canvas is empty');
 ok(bytesOf(big, 1) + canvasBytes(4096, 2304, 256) > BUDGET, 'art + canvas over budget is caught by the sum');
+
+// bend
+ok(Math.abs(spacing(100, 0.21) - 58) < 1e-9, 'pieces fading 21 % each end sit 58 % apart');
+ok(heading(-1, 1) === 45 && heading(1, 1) === 45, 'mirrored sprite keeps the unmirrored angle');
+{
+    let got = null;
+    const m = {init_from_2d: (...v) => (got = v, m)}, a = {get_transform: () => m, set_transform: x => ok(x === m, 'shear sets the matrix')};
+    shear(a, 45, 10);
+    ok(Math.abs(got[2] + 1) < 1e-9 && Math.abs(got[4] - 10) < 1e-9, 'shear slides rows, joint row py stays put');
+    const p = {bend: 0, bv: 0}, dt = 1 / 30;
+    for (let i = 0; i < 300; i++) { p.bv += 400 * dt; spring(p, dt); ok(Math.abs(p.bend) <= 1 && Math.abs(p.bv) <= 4, 'bend clamped'); }
+    for (let i = 0; i < 300; i++) spring(p, dt);
+    ok(p.bend === 0 && p.bv === 0, 'bend comes to rest');
+}
 
 // world
 const w = makeWorld(), raw = {mx: 100, my: 0, mw: 1000, mh: 500, px: 300, py: 200, bare: true, down: true,
@@ -99,9 +114,10 @@ const declBad = decl => {
             continue;
         }
         const lo = d.min ?? -Infinity, hi = d.max ?? Infinity;
-        const back = resolve([{...d, default: Symbol.for('x')}], JSON.stringify({s: {[d.key]: d.default}}), 's')[d.key];
-        if (!d.key || keys.has(d.key) || !d.label || !['bool', 'int', 'double', 'choice', 'time'].includes(d.type) ||
-            (d.type === 'choice' && !d.choices?.length) || lo > hi || (d.step !== undefined && !(d.step > 0)) || back !== d.default)
+        const back = v => resolve([{...d, default: Symbol.for('x')}], JSON.stringify({s: {[d.key]: v}}), 's')[d.key];
+        if (!d.key || keys.has(d.key) || !d.label || !['bool', 'int', 'double', 'choice', 'time', 'action'].includes(d.type) ||
+            (d.type === 'choice' && !d.choices?.length) || (d.type === 'action' && d.rebuild) || lo > hi || (d.step !== undefined && !(d.step > 0)) ||
+            back(d.default) !== d.default || ('still' in d && back(d.still) !== d.still))
             return d.key ?? '?';
         keys.add(d.key);
     }
@@ -111,6 +127,10 @@ for (const bad of [[{key: 'c', type: 'choice', label: 'C', default: 'x'}], [{key
     [{key: 'i', type: 'int', label: 'I', default: 9, min: 0, max: 8}], [D[0], {...D[0]}].map(d => ({...d, label: 'B'}))])
     ok(declBad(bad), `bad declaration caught: ${JSON.stringify(bad)}`);
 ok(declBad([{key: 'l', type: 'log', label: 'L', kinds: {}}]), 'log without a path caught');
+ok(declBad([{...D[1], label: 'I', still: 9}]), 'a still value outside the range caught');
+const ACT = {key: 'a', type: 'action', label: 'Go', default: 0};
+ok(!declBad([ACT]) && resolve([ACT], '{"s":{"a":2}}', 's').a === 2 && encode([ACT], '', 's', {a: 1}) === '{"s":{"a":1}}', 'action: 0 fits, a press round-trips');
+ok(resolve([ACT], '{"s":{"a":true}}', 's').a === 0 && resolve([ACT], '{"s":{"a":-1}}', 's').a === 0, 'action: bool / negative rejected');
 const LOG = {key: 'l', type: 'log', label: 'Log', path: ['tank', 'log'], kinds: {fry: 'Baby fish', yawn: 'A yawn'}};
 ok(!declBad([LOG]) && !('l' in resolve([LOG], '{"s":{"l":5}}', 's')), 'log is valid and stores nothing');
 const days = Array.from({length: 9}, (_, i) => ({day: `2026-10-0${i + 1}`, kind: i % 2 ? 'fry' : 'yawn'}));
@@ -138,6 +158,8 @@ pp = posterPlan(ourBg, JSON.stringify(mine), P, BASE);
 ok(!pp.save && pp.apply.uri === P.uri, 're-enable after lock: poster already up, nothing saved twice');
 pp = posterPlan(ourBg, JSON.stringify(mine), {uri: `${BASE}dot/poster.jpg`, dark: `${BASE}dot/poster-dark.jpg`}, BASE);
 ok(!pp.save && pp.apply.dark.endsWith('dot/poster-dark.jpg'), 'scene switch keeps the saved wallpaper');
+pp = posterPlan(mine, '', {uri: `${BASE}dot/poster-dark.jpg`}, BASE);
+ok(pp.apply.uri === pp.apply.dark && pp.apply.uri.endsWith('poster-dark.jpg'), 'lights off: the night poster for both styles');
 ok(!posterPlan(mine, JSON.stringify(mine), P, BASE).save, 'same wallpaper is not saved again');
 pp = posterPlan(ourBg, JSON.stringify(mine), null, BASE);
 ok(JSON.stringify(pp.apply) === JSON.stringify(mine) && pp.clear && !pp.reset, 'turn off restores');

@@ -71,35 +71,35 @@ function threat(c) {
     return null;
 }
 
-// Best food piece for this fish, or null: own layer only; near, little contested pieces win; a
-// piece already held by 2 fish is skipped (unless it is ours). Bottom feeders take only sunk
-// food; the rest give up on a piece once it sinks below their home band (so they don't follow it
-// down to the sand) unless it is close. Surface feeders notice food above.
+// Best food piece for this fish, or null: own layer only, nearest wins; a piece another fish holds is
+// skipped (one fish per piece, so a pinch spreads out instead of a scrum on one flake). Bottom
+// feeders take only sunk food; the rest chase sinking food all the way down but leave what lies on
+// the sand to them. Surface feeders notice food above.
 export function flake(b, c) {
     let best = null, bs = 1e9;
     if (c.food) for (const k of c.food) {
         if (!k.live || k.layer !== c.layer) continue;
-        const mine = k === b.food, claims = k.claims - (mine ? 1 : 0);
-        if (claims >= 2) continue;
+        if (k.claims > (holds(b, k) ? 1 : 0)) continue;
         let d = dist(c.f, k);
         if (b.pers.surface && k.y < c.f.y) d /= 1.5;
         if (d > SEE * 2) continue;
         if (b.pers.bottom && !k.settled && k.y < c.b.y + c.b.h * b.pers.band[0]) continue;
-        if (!b.pers.bottom && k.y > c.b.y + c.b.h * b.pers.band[1] && d > 60) continue;
-        const s = d + 120 * claims;
-        if (s < bs) { bs = s; best = k; }
+        if (!b.pers.bottom && k.settled && !k.perch) continue;
+        if (d < bs) { bs = d; best = k; }
     }
     return best;
 }
+// a pool piece reused for a new drop is a new piece, not the one b claimed
+const holds = (b, k) => k === b.food && k.born === b.foodBorn;
 function claim(b, k) {
-    if (k === b.food) return;
+    if (k && holds(b, k)) return;
     release(b);
     if (!k) return;
     k.claims++;
     b.food = k;
     b.foodBorn = k.born;
 }
-function release(b) {
+export function release(b) {
     const k = b.food;
     if (k && k.born === b.foodBorn) k.claims = Math.max(0, k.claims - 1);  // a reused piece is not ours
     b.food = null;
@@ -334,10 +334,10 @@ export const STATES = {
             return calm(b, c, to(I(b, 1.3, m), m.x - Math.cos(m.dir) * behind, m.y - Math.sin(m.dir) * behind));
         },
     },
-    feed: {  // claim a piece, ease in, line up, snap; a miss carries the fish past and it loops back
+    feed: {  // claim a piece, ease in, line up the mouth, snap; a miss carries the fish past and it loops back
         enter: (b, c) => { b.timer = 15; b.retarget = 1; b.over = 0; b.eat = 0; claim(b, flake(b, c)); },
         update: (b, c) => {
-            if (b.timer <= 0) { b.foodCool = 5; return 'idle'; }  // no endless chases
+            if (b.timer <= 0) { b.foodCool = 2; return 'idle'; }  // no endless chases
             if ((b.retarget -= c.dt) <= 0 || !b.food?.live) { b.retarget = 1; claim(b, flake(b, c)); }
             const k = b.food, { f, b: w } = c;
             if (!k) return 'idle';
@@ -347,16 +347,18 @@ export const STATES = {
                 it.shoal = 0;
                 return it;
             }
-            // bug fix: a flake on the sand or by the glass sat outside where steer lets the fish's
-            // centre go, so it was never in reach; aim at (and measure to) the nearest reachable spot
-            const at = b.pt;
-            at.x = Math.max(w.x + f.pad, Math.min(w.x + w.w - f.pad, k.x));
-            at.y = Math.max(w.y + f.pad, Math.min(sandY(c), k.y));
-            const d = dist(f, at);
+            // bug fix: fish aimed their middle at the flake (ate with it in the belly) and trailed a sinking
+            // one forever. Now the body stops beside it with the mouth on the flake, aiming 0.7 s ahead of its
+            // fall; clamped to where steer lets the fish's centre go, so food by the glass or the sand stays in reach.
+            // ponytail: mouth = 0.8 pad ahead of the centre; read a mouth point from the manifest if fish look off
+            const side = f.x <= k.x ? 1 : -1, mo = 0.8 * f.pad, at = b.pt;
+            at.x = Math.max(w.x + f.pad, Math.min(w.x + w.w - f.pad, k.x - side * mo));
+            at.y = Math.max(w.y + f.pad, Math.min(sandY(c), k.y + (k.settled ? 0 : (k.vy || 0) * 0.7)));
+            const d = dist(f, at), mx = f.x + (Math.cos(f.dir) >= 0 ? mo : -mo) - k.x, my = f.y - k.y;
             const it = to(I(b, 0.3, k), at.x, at.y);
             it.shoal = 0;
             if (b.eat > 0) { b.eat -= c.dt; it.chomp = true; return it; }
-            if (d < 14 + f.pad * 0.3) {
+            if (mx * mx + my * my < (10 + 0.2 * f.pad) ** 2) {
                 if (c.rand() < (b.fed >= 50 ? 0.1 : 0.2)) {  // missed: knocks it, overshoots, comes round again
                     c.feeder?.kick(k, Math.cos(f.dir) * 12);
                     b.over = 0.3;
@@ -364,6 +366,7 @@ export const STATES = {
                     b.fed++;
                     b.nods++;
                     b.eat = 0.4;
+                    b.timer = 15;
                     if (!k.live) release(b);
                 }
                 b.retarget = 0.4;
@@ -373,7 +376,7 @@ export const STATES = {
             const fast = (1.6 + 0.3 * Math.min(1, b.fed / 50)) * (b.pers.curious < 0.3 ? 0.8 : 1);
             it.speed = d > 120 ? fast : Math.min(fast, 0.6 + d / 120);
             it.chomp = d < 40;
-            if (d < 80) it.pitch = Math.max(-0.45, Math.min(0.45, Math.atan2(at.y - f.y, Math.abs(at.x - f.x) + 1)));
+            if (d < 80) it.pitch = Math.max(-0.45, Math.min(0.45, Math.atan2(k.y - f.y, Math.abs(k.x - f.x) + 1)));
             return it;
         },
     },

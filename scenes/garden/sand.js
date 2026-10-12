@@ -285,7 +285,8 @@ export function fit(data) {
             Array.isArray(m.strokes) && m.strokes.every(s => Array.isArray(s?.d))))
             mons[k] = m;
     }
-    const out = {v: 1, mons};
+    const smoothed = Number.isInteger(data?.smoothed) && data.smoothed >= 0 ? data.smoothed : 0;  // last Smooth press acted on
+    const out = {v: 1, mons, smoothed};
     const pts = m => (m.strokes ?? []).reduce((n, s) => n + s.d.length, 0);
     while (JSON.stringify(out).length > STORE_LIMIT) {
         const m = Object.values(mons).reduce((a, b) => pts(b) > pts(a) ? b : a);

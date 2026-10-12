@@ -7,6 +7,7 @@ export const makeWorld = () => ({
     idle: 0, hour: 0, dark: false, notifications: 0,
     lightsOn: true, warm: false,
     ready: false,  // the host sets it once this monitor's first textures have decoded (or after 3 s)
+    gap: 0,  // s since this monitor's previous tick when over 1 s (it was paused, frozen or resting), else 0
     _seen: new Map(),  // window id -> {x, y, vx, vy, age, gen}; host-private
     _gen: 0,
 });

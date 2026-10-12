@@ -34,6 +34,8 @@ function valid(d, v) {
         return d.choices?.some(c => c[0] === v) ? v : undefined;
     case 'time':  // minutes since midnight
         return Number.isInteger(v) && v >= 0 && v < 1440 ? v : undefined;
+    case 'action':  // how many times its button was pressed
+        return Number.isInteger(v) && v >= 0 ? v : undefined;
     }
     return undefined;
 }

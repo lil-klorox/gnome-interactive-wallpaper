@@ -1,6 +1,6 @@
 // Fishtank scene: scenery + critters + food (tank.js) and fish (fish.js), wired to the host's ctx.
-// Settings are read fresh every tick from ctx.settings (the host refreshes it in place and rebuilds
-// the scene itself for counts/critters/decor), so live knobs need no listener.
+// Settings are read fresh every tick from ctx.settings (the host refreshes it in place); fish counts and
+// colours change live through onSettings; critters and decor rebuild the scene.
 import { Tank } from './tank.js';
 import { School } from './fish.js';
 import { SETTINGS } from './settings.js';
@@ -13,8 +13,12 @@ export default function create(ctx) {
     const env = { act: ACT[S.activity] ?? 1, curiosity: S.curiosity !== false };
     const tank = new Tank(ctx, S, env), school = new School(ctx, tank, env);
     // food falls in the far layer as often as fish live there (no far fish: all near)
-    const per = school._mates;  // ponytail: School's per-layer lists; use a public count if fish.js ever exposes one
-    if (per) tank.food.farShare = per[0].length / Math.max(1, per[0].length + per[1].length);
+    const share = () => {
+        const [far, near] = school._mates;  // ponytail: School's per-layer lists; use a public count if fish.js ever exposes one
+        tank.food.farShare = far.length / Math.max(1, far.length + near.length);
+    };
+    share();
+    ctx.onSettings?.(keys => { school.onSettings(keys); share(); });
     const P = ctx.world.pointer;
     const g = hand();
     g.down = P.down;
@@ -22,6 +26,8 @@ export default function create(ctx) {
         tick(dt, t) {
             env.act = ACT[S.activity] ?? 1;
             env.curiosity = S.curiosity !== false;
+            // unseen a while: food that had landed is gone by now
+            if (ctx.world.gap) for (const p of tank.food.pieces) if (p.settled) p.fade += ctx.world.gap;
             // on bare desktop: a click drops a pinch, holding pours
             const top = P.y < tank.swimBounds.y + 40;
             switch (gesture(g, P, dt)) {

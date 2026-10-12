@@ -137,3 +137,29 @@ export function step(f, dt, it, b, all, rand = Math.random) {
         f.y = clamp(f.y + f.hv * dt, y0, y1);
     }
 }
+
+// Saved fish spot {x, y (fractions of the swim box), dir, at (epoch ms)}: store data is untrusted,
+// so anything not a finite number gives null and fractions are clamped.
+export const spotOf = r => [r?.x, r?.y, r?.dir, r?.at].every(Number.isFinite)
+    ? { x: clamp(r.x, 0, 1), y: clamp(r.y, 0, 1), dir: r.dir, at: r.at } : null;
+export const here = (f, b, at) => ({ x: Math.round((f.x - b.x) / b.w * 1e3) / 1e3, y: Math.round((f.y - b.y) / b.h * 1e3) / 1e3,
+    dir: Math.round(f.dir * 100) / 100, at });
+// Puts f at a saved spot, then on for the time it was away. False (f untouched) when r is odd.
+export function resume(f, r, b, now) {
+    const p = spotOf(r);
+    if (!p) return false;
+    f.x = b.x + p.x * b.w;
+    f.y = b.y + p.y * b.h;
+    f.dir = Math.atan2(Math.sin(p.dir), Math.cos(p.dir));
+    coast(f, (now - p.at) / 1000, b);
+    return true;
+}
+// Unseen for sec s: swim on along the heading at a slow cruise (at most 20 s worth), turning off the glass.
+const fold = (v, lo, hi) => { const w = Math.max(1, hi - lo), u = ((v - lo) % (2 * w) + 2 * w) % (2 * w); return lo + (u > w ? 2 * w - u : u); };
+export function coast(f, sec, b) {
+    const d = clamp(sec, 0, 20) * f.cruise * 0.3;
+    f.x = fold(f.x + Math.cos(f.dir) * d, b.x + f.pad, b.x + b.w - f.pad);
+    f.y = fold(f.y + Math.sin(f.dir) * d, b.y + f.pad, b.y + b.h - f.pad);
+    f.vx = Math.cos(f.dir) * f.speed;
+    f.vy = Math.sin(f.dir) * f.speed;
+}
