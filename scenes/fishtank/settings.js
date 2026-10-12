@@ -25,7 +25,7 @@ export const SETTINGS = [
     morph('angelMorph', 'Angelfish colour', 'gold', 'Gold'),
 
     critter('jelly', 'Jellyfish'), critter('gardenEels', 'Garden eels'), critter('moray', 'Moray eel'),
-    critter('seahorse', 'Seahorses'), critter('shrimp', 'Cherry shrimp'), critter('hermit', 'Hermit crab'),
+    critter('seahorse', 'Seahorses'), critter('shrimp', 'Cherry shrimp'), critter('hermit', 'Hermit crab'), critter('snail', 'Snail'),
     critter('visitors', 'Rare visitors (turtle, shark, baby fish)', false),
 
     {key: 'activity', type: 'choice', label: 'How busy the fish are', group: 'Behaviour', default: 'normal',

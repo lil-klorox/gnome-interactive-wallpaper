@@ -66,6 +66,11 @@ function load(sc, cancel, name) {
     return rec;
 }
 
+// Kept across disable/enable so a quick lock/unlock reads what the last session just saved, not the
+// disk copy its save hasn't replaced yet. At most 64 KB per scene.
+const STORES = new Map();
+const storeFor = id => STORES.get(id) ?? STORES.set(id, store(id)).get(id);
+
 function store(id) {
     const dir = GLib.build_filenamev([GLib.get_user_data_dir(), 'interactive-wallpaper']);
     const file = Gio.File.new_for_path(GLib.build_filenamev([dir, `${id}.json`]));
@@ -222,8 +227,7 @@ export function makeCtx(sc, cache, cancel, t, w, h, monitor) {
             },
         };
     };
-    // ponytail: store is per scene load, so a quick off/on can overlap the old save with the new read; share by id if that bites.
     return Object.freeze({root: t.root, w, h, ref: sc.man.ref, images: sc.man.images, world: t.world, image, sheet,
         monitor, canvas: opts => canvas(sc, t.root, opts),
-        store: (sc.store ??= store(sc.id)), settings: sc.settings, onSettings: fn => (t.onSettings = fn)});
+        store: (sc.store ??= storeFor(sc.id)), settings: sc.settings, onSettings: fn => (t.onSettings = fn)});
 }

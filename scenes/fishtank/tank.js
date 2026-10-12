@@ -257,7 +257,7 @@ export class Tank {
         const hole = this._point(at.ship, 'hole');
         if (hole) this.ship = { hole: { x: hole[0] * s, y: hole[1] * s }, actor: at.ship[0] };
         this._bubbles(mid, at);
-        this._snail(mid, 0.3 * W, 0.56 * W, SNAIL_Y);
+        if (this._S.snail) this._snail(mid, 0.3 * W, 0.56 * W, SNAIL_Y);
         this._box.add_child(this.fishLayers[1]);
         this._motes(1, w, h);
 
