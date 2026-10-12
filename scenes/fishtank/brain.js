@@ -23,8 +23,7 @@
 //                (attnNew on its first tick), wake: user just came back, drowsy: rest weight
 //                multiplier (night/idle), lazy: speed multiplier, night: lights off, act: activity
 //                0.5..1.5, curiosity: false = ignore cursor + critters, spots: [{x,y}] critters worth
-//                a look, perches: [{x,y}] plant stems, tap: {x, y, age, n} the last glass tap | null,
-//                torch: the night flashlight is on the cursor }
+//                a look, perches: [{x,y}] plant stems, torch: the night flashlight is on the cursor }
 // Brain fields other code reads: state, fed (food eaten), nods (bumps each nose-down: bite,
 // sand nibble), cling (pleco on the glass), timer. fish.js sets pet (the tame favourite).
 
@@ -74,7 +73,8 @@ function threat(c) {
 
 // Best food piece for this fish, or null: own layer only; near, little contested pieces win; a
 // piece already held by 2 fish is skipped (unless it is ours). Bottom feeders take only sunk
-// food, the rest leave food on the sand unless it is close. Surface feeders notice food above.
+// food; the rest give up on a piece once it sinks below their home band (so they don't follow it
+// down to the sand) unless it is close. Surface feeders notice food above.
 export function flake(b, c) {
     let best = null, bs = 1e9;
     if (c.food) for (const k of c.food) {
@@ -85,7 +85,7 @@ export function flake(b, c) {
         if (b.pers.surface && k.y < c.f.y) d /= 1.5;
         if (d > SEE * 2) continue;
         if (b.pers.bottom && !k.settled && k.y < c.b.y + c.b.h * b.pers.band[0]) continue;
-        if (!b.pers.bottom && k.settled && d > 120) continue;
+        if (!b.pers.bottom && k.y > c.b.y + c.b.h * b.pers.band[1] && d > 60) continue;
         const s = d + 120 * claims;
         if (s < bs) { bs = s; best = k; }
     }
@@ -224,7 +224,7 @@ export const STATES = {
         },
     },
     flee: {  // whoever sends a fish here sets b.fx/fy, the point to flee from
-        enter: b => { b.panic = b.fright || 1; b.fright = 0; },  // fright: a half scare (tap, torch)
+        enter: b => { b.panic = b.fright || 1; b.fright = 0; },  // fright: a softer scare (torch)
         update: (b, c) => {
             const r = threat(c);
             if (r) { b.fx = r.x + r.w / 2; b.fy = r.y + r.h / 2; } else if (c.p && dist(c.f, c.p) < SEE * 1.5) { b.fx = c.p.x; b.fy = c.p.y; }
@@ -236,7 +236,7 @@ export const STATES = {
         },
     },
     bored: {  // wary cool-down: ignores the cursor unless it startles; a school stays packed tight a while
-        enter: (b, c) => { b.timer = c.tap?.age < 3 ? 1.5 : 5 + c.rand() * 3; b.cool = b.timer + 2; b.since = 0; },  // after a tap: soon back to look
+        enter: (b, c) => { b.timer = 5 + c.rand() * 3; b.cool = b.timer + 2; b.since = 0; },
         update: (b, c) => {
             b.since += c.dt;
             if (b.timer <= 0) return b.pers.home && c.perches?.length ? 'home' : 'idle';  // clowns head home after a scare
@@ -386,7 +386,7 @@ export const STATES = {
 export function makeBrain(pers, rand = Math.random) {
     return { pers, state: 'idle', timer: 4 + rand() * 6, cool: 0, still: 0, panic: 0, fx: 0, fy: 0, fed: 0, dart: 0, food: null,
         foodBorn: -1, foodCool: 0, react: -1, startle: -1, flareCool: 10, stalkCool: 10, visitCool: 20, nods: 0, cling: 0, homeIdx: 0,
-        pet: false, greet: 0, fright: 0, tapN: 0,
+        pet: false, greet: 0, fright: 0,
         it: Object.fromEntries(KEYS.map(k => [k, undefined])), pt: { x: 0, y: 0 } };
 }
 
@@ -403,10 +403,7 @@ export function think(b, c) {
     b.still = c.p && c.p.speed < 30 ? b.still + dt : 0;
     // a fast cursor or a moving window nearby startles every fish whatever it was doing; panic
     // spreads to calm neighbours a beat later (a ripple through the school)
-    const p = c.p, calmNow = b.state !== 'flee', tap = c.tap;
-    // a tap on the glass close by: a half scare (once per tap), and the cursor is worth a look again
-    const tapped = tap && tap.n !== b.tapN && tap.age < 0.5 && (b.tapN = tap.n, calmNow && !b.pet && dist(c.f, tap) < SEE * 1.5);
-    if (tapped) { b.still = 0; b.cool = 0; }
+    const p = c.p, calmNow = b.state !== 'flee';
     const scare = calmNow && p && p.speed > FAST * b.pers.nerve * tame(b) && dist(c.f, p) < SEE * 1.5;
     const th = calmNow && !scare && threat(c);
     const spooked = calmNow && !scare && !th && b.cool <= 0 && b.startle < 0 && mateIn(c, 'flee', 220);
@@ -417,7 +414,6 @@ export function think(b, c) {
     else if (b.react < 0) b.react = (1 - b.pers.curious) * 1.2 + c.rand() * 0.5;
     let r = null;
     if (scare) { b.fx = p.x; b.fy = p.y; r = 'flee'; b.startle = -1; }
-    else if (tapped) { b.fx = tap.x; b.fy = tap.y; b.fright = 0.5; r = 'flee'; b.startle = -1; }
     else if (th) { b.fx = th.x + th.w / 2; b.fy = th.y + th.h / 2; r = 'flee'; b.startle = -1; }
     else if (b.startle >= 0 && (b.startle -= dt) < 0) r = calmNow ? 'flee' : null;
     else if (food && (b.react -= dt) < 0) r = 'feed';

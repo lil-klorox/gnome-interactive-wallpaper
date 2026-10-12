@@ -83,12 +83,18 @@ export default class Prefs extends ExtensionPreferences {
         const settings = this.getSettings(), ids = Object.keys(SCENES);
         const page = new Adw.PreferencesPage();
         const top = new Adw.PreferencesGroup();
-        const live = new Adw.SwitchRow({title: 'Live wallpaper', subtitle: 'Off puts your normal wallpaper back'});
+        const live = new Adw.SwitchRow({title: 'Live wallpaper',
+            subtitle: 'Show the moving scene instead of your normal wallpaper. Off puts your own wallpaper back.'});
         settings.bind('live', live, 'active', Gio.SettingsBindFlags.DEFAULT);
+        const frozen = new Adw.SwitchRow({title: 'Freeze motion',
+            subtitle: 'Stop the scene where it is and keep it as a still picture. Uses no CPU until you turn it off.'});
+        settings.bind('frozen', frozen, 'active', Gio.SettingsBindFlags.DEFAULT);
+        settings.bind('live', frozen, 'sensitive', Gio.SettingsBindFlags.GET);
         const scene = new Adw.ComboRow({title: 'Scene', model: Gtk.StringList.new(ids.map(id => SCENES[id].name))});
         const pick = () => (scene.selected = Math.max(0, ids.indexOf(settings.get_string('scene'))));
         pick();
         top.add(live);
+        top.add(frozen);
         top.add(scene);
         page.add(top);
 

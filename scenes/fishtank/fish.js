@@ -243,7 +243,6 @@ export class School {
         c.attn = (this._attnT -= dt) > 0 ? this._attn : null;
         this._threatsFrom(W.windows);
         c.food = tank.food?.any ? tank.food.pieces : null;
-        c.tap = tank.tapAt?.age < 5 ? tank.tapAt : null;
         c.torch = night && !!c.p && this._ctx.settings?.flashlight !== false;
         const F = tank.flow?.on ? tank.flow : null;
         // brains think at 10 Hz, a third of the fish each tick; bodies move every tick
@@ -376,8 +375,8 @@ export class School {
                 this._tank.puff?.(nx - 4, ny); this._tank.puff?.(nx + 4, ny + 2);
             }
         }
-        f.nod = Math.max(0, f.nod - dt / 0.3);
-        const ang = f.pitch + f.bank + f.nod * NOD + 0.02 * Math.sin(t * 0.9 + f.ph0 + 1);
+        f.nod = Math.max(0, f.nod - dt / 0.3);  // the nod dips and comes back up as one smooth bump (it used to snap down)
+        const ang = f.pitch + f.bank + Math.sin(Math.PI * (1 - f.nod)) * NOD + 0.02 * Math.sin(t * 0.9 + f.ph0 + 1);
         const rot = Math.round((mirror ? -ang : ang) * 229) / 4;  // 0.25 degree steps, set only on change
         if (rot !== f.rot) box.set_rotation_angle(Clutter.RotateAxis.Z_AXIS, f.rot = rot);
         f.swell += ((it.flare ? 1.08 : 1) - f.swell) * Math.min(1, dt / 0.15);  // betta flare

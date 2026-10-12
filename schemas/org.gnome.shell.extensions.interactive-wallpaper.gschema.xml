@@ -10,6 +10,11 @@
       <summary>Show the live wallpaper</summary>
       <description>Off puts your normal wallpaper back while the extension stays enabled.</description>
     </key>
+    <key name="frozen" type="b">
+      <default>false</default>
+      <summary>Freeze the live wallpaper</summary>
+      <description>Stops the scene where it is and keeps it as a still picture; it stays loaded, so turning this off carries on at once.</description>
+    </key>
     <key name="scene-settings" type="s">
       <default>'{}'</default>
       <summary>Each scene's own settings</summary>

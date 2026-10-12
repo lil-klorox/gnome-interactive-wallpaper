@@ -9,23 +9,20 @@ export const POOL = 24;
 const CRUMBS = 9;          // per layer
 const TAU = Math.PI * 2;
 const FAR = 0.7;           // far layer: smaller and sinks slower
-const FADE = 45;           // s a settled piece lies on the sand before it is gone
+const FADE = 20;           // s a settled piece lies on the sand before it is gone
 const SINK = 16;           // ref px/s a small flake sinks lying flat (calibration knob)
 const KINDS = 4;           // sheet rows: red, green, yellow-brown flake, pellet (3)
 // Pointer gestures on bare desktop (the pointer is polled, so these are timed `down` edges).
-export const TAP_S = 0.4, TAP_PX = 20;  // a second click this soon and this close taps the glass
 export const HOLD_S = 0.35, POUR_S = 0.12;  // holding the button this long pours one piece every POUR_S
 
-export const hand = () => ({ down: false, on: false, t: 0, last: -9, lx: 0, ly: 0, held: 0, pour: 0, n: 0 });
-// One tick of the pointer P: 'drop' (a click), 'tap' (a double click), 'pour' (held), or null.
+export const hand = () => ({ down: false, on: false, held: 0, pour: 0, n: 0 });
+// One tick of the pointer P: 'drop' (a click), 'pour' (held), or null.
 export function gesture(g, P, dt) {
-    g.t += dt;
     const edge = P.down && !g.down && P.over;
     g.down = P.down;
     if (edge) {
-        const tap = g.t - g.last < TAP_S && Math.hypot(P.x - g.lx, P.y - g.ly) < TAP_PX;
-        g.last = tap ? -9 : g.t; g.lx = P.x; g.ly = P.y; g.on = true; g.held = g.pour = 0;
-        return tap ? 'tap' : 'drop';
+        g.on = true; g.held = g.pour = 0;
+        return 'drop';
     }
     if (!P.down || !P.over) { g.on = false; return null; }
     if (!g.on || (g.held += dt) < HOLD_S || (g.pour -= dt) > 0) return null;
@@ -63,7 +60,7 @@ export class Food {
                 a.set_pivot_point(an[0] / e.w, an[1] / e.h);
                 tank.fishLayers[1].add_child(a);
             }
-            this._a.push({ a, col: -1, op: -1, rot: NaN, k: NaN, q: NaN, tx: NaN, ty: NaN });
+            this._a.push({ a, col: -1, op: -1, rot: NaN, k: NaN, q: NaN, tx: NaN, ty: NaN, gone: 0 });
         }
         const cm = ctx.images.crumb;
         if (cm) for (const l of [0, 1]) for (let i = 0; i < CRUMBS; i++) {
@@ -103,21 +100,22 @@ export class Food {
                 if (s.a.get_parent() !== par) { s.a.get_parent()?.remove_child(s.a); par.add_child(s.a); }
                 s.col = s.op = -1;
                 s.rot = s.k = s.q = s.tx = s.ty = NaN;
+                s.gone = 0;
                 s.a.visible = true;
                 this._sh.show(s.a, kind * 8);
             }
         }
     }
 
-    // A real bite: piece shrinks, crumbs fly, it jumps; the third bite finishes it.
+    // A real bite: the piece shrinks (smoothly, see tick) and a crumb or two flies; the third bite
+    // finishes it, and it shrinks away to nothing at the mouth instead of blinking out.
     bite(k) {
         const p = typeof k === 'number' ? this.pieces[k] : k;
         if (!p?.live) return false;
         p.bites++;
-        p.size *= 0.75;
-        for (let j = 0; j < 3; j++) this._crumb(p);
-        this.kick(p, (this._rand() - 0.5) * 24);
-        if (p.bites >= 3) this._kill(p);
+        p.size *= 0.7;
+        for (let j = 0; j < 2; j++) this._crumb(p);
+        if (p.bites >= 3) { p.live = false; this._a[this.pieces.indexOf(p)].gone = 1; }
         return true;
     }
 
@@ -148,8 +146,12 @@ export class Food {
         const r = this._rand, s = this._s, T = this._tank;
         let any = false;
         for (let i = 0; i < POOL; i++) {
-            const p = this.pieces[i];
-            if (!p.live) continue;
+            const p = this.pieces[i], st = this._a[i];
+            if (!p.live) {  // eaten: shrinks to nothing over 0.15 s, then hides
+                if (st.gone > 0 && st.a && (st.gone -= dt / 0.15) > 0) st.a.set_scale(st.k * st.gone, st.k * st.q * st.gone);
+                else if (st.gone > 0) { st.gone = 0; if (st.a) st.a.visible = false; }
+                continue;
+            }
             any = true;
             p.age += dt;
             const far = p.layer ? 1 : FAR, v = far * s;  // speeds are ref px/s
@@ -189,11 +191,14 @@ export class Food {
                 p.fade += dt;
                 if (p.fade >= FADE) { this._kill(p); continue; }
             }
-            const st = this._a[i];
             if (!st.a) continue;
             const a = st.a, f = p.kind * 8 + col;
             if (f !== st.col) this._sh.show(a, st.col = f);
-            const k = Math.round(p.size * far * s * (0.9 + 0.2 * Math.min(1.5, p.z)) * 50) / 50;  // closer = a little bigger
+            // closer = a little bigger; eases toward the size so a bite shrinks it smoothly, not in a jump
+            const kk = p.size * far * s * (0.9 + 0.2 * Math.min(1.5, p.z));
+            const ke = Number.isNaN(st.k) ? kk : st.k + (kk - st.k) * Math.min(1, dt * 12);
+            let k = Math.round(ke * 50) / 50;
+            if (k === st.k) k = Math.round(kk * 50) / 50;  // bug fix: a small gap rounded back to the old size and stuck there
             const q = p.settled && !p.perch ? 0.85 : 1;  // pressed into the sand
             if (k !== st.k || q !== st.q) a.set_scale(st.k = k, k * (st.q = q));
             if (rot !== st.rot) a.set_rotation_angle(2, st.rot = rot);  // 2 = Clutter.RotateAxis.Z_AXIS

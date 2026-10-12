@@ -1,5 +1,5 @@
 // Self-check for brain.js + steer.js, food.js and critters.js: `gjs -m check.js` or `node check.js`.
-import { Food, POOL, hand, gesture, TAP_S, HOLD_S, POUR_S } from './food.js';
+import { Food, POOL, hand, gesture, HOLD_S, POUR_S } from './food.js';
 import { Critters, plan, readTank, dayOf, EVENTS, LOG } from './critters.js';
 import { makeBrain, think, PERSONALITY, NEAR, FAST, SEE, drowsy, lazy } from './brain.js';
 import { makeFish, step, drift, FLOW } from './steer.js';
@@ -325,16 +325,12 @@ cr = new Critters(ctxOf(IMAGES), tk, ON, { act: 1 }, rand);
     ok(new Critters(ctxOf(IMAGES), tk, { ...ON, events: false }, { act: 1 }, rand)._daily() === undefined, 'events off: nothing');
 }
 
-// pointer gestures: click drops, a quick second click close by taps, holding pours at a steady rate
+// pointer gestures: each click drops, holding pours at a steady rate
 {
     const g = hand(), P = { x: 500, y: 300, down: false, over: true }, seq = [];
     const run = (down, s) => { P.down = down; for (let t = 0; t < s - 1e-9; t += dt) { const e = gesture(g, P, dt); if (e) seq.push(e); } };
     run(true, dt); run(false, 0.2); run(true, dt); run(false, 1);
-    ok(String(seq) === 'drop,tap', `double click taps (${seq})`);
-    seq.length = 0; run(true, dt); run(false, TAP_S + 0.1); run(true, dt); run(false, 1);
-    ok(String(seq) === 'drop,drop', 'two slow clicks are two drops');
-    seq.length = 0; run(true, dt); run(false, 0.1); P.x += 40; run(true, dt); run(false, 1);
-    ok(String(seq) === 'drop,drop', 'two clicks far apart are two drops');
+    ok(String(seq) === 'drop,drop', `a double click is two drops (${seq})`);
     seq.length = 0; run(true, 2); run(false, 0.5);
     const pours = seq.filter(e => e === 'pour').length, want = (2 - HOLD_S) / POUR_S;
     ok(seq[0] === 'drop' && Math.abs(pours - want) <= 1.5, `hold pours ~${want | 0} pieces in 2 s (${pours})`);

@@ -42,7 +42,9 @@ GNOME only notices new extensions when you log in, so log out and back in, then 
 ## Use it
 
 Open Quick Settings (the menu in the top-right corner). The **Wallpaper** tile turns the live
-wallpaper on and off, and its arrow lets you pick a scene or open **Wallpaper settings…**. You can
+wallpaper on and off, and its arrow lets you pick a scene or open **Wallpaper settings…**. The
+same menu has **Freeze motion**: it stops the scene right where it is and keeps it on screen as a
+still picture, using no CPU, until you switch it off again and everything carries on. You can
 also find the settings by searching "Interactive Wallpaper" in the Activities overview. The settings
 window shows the knobs for the scene you picked, like when the tank lights go off, how many of each
 fish you want, or which critters live there. "Reset to defaults" puts them all back.
@@ -70,9 +72,8 @@ bottom feeders tidy up what lands on the sand. Drag a window across the tank and
 out from under it. The lights follow a schedule you can set, a notification sends up a burst of
 bubbles, and fish you feed get braver over the following days and slowly grow.
 
-Double-click the glass and the fish startle, hold the button down to pour food, and at night your
-cursor becomes a flashlight the small fish drift toward. The fish you feed most turns tame and comes
-to say hi, and once a day something small and rare might happen, like baby fish hatching. Jellyfish,
+Hold the button down to pour food, and at night your cursor becomes a flashlight the small fish
+drift toward. The fish you feed most turns tame and comes to say hi, and once a day something small and rare might happen, like baby fish hatching. Jellyfish,
 eels, seahorses, shrimp and a hermit crab live in there too. All of its art was modeled and rendered
 ahead of time in Blender, so your computer only has to slide pictures around.
 

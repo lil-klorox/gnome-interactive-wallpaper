@@ -28,13 +28,14 @@ const feeder = { bite: k => k.live && (++k.bites >= 3 && (k.live = false), true)
     ok(all.reduce((n, o) => n + o.b.fed, 0) === 18, 'every bite counted');
 }
 
-// bottom feeders ignore falling food until it sinks; others ignore food lying on the sand far off
+// bottom feeders ignore falling food until it sinks; others drop food once it sinks below their band
 {
     const cory = fish(800, 860, 'cory'), c = ctx(cory, [cory]);
     ok(flake(cory.b, { ...c, food: [piece(820, 300)] }) === null, 'cory ignores a falling piece');
     ok(flake(cory.b, { ...c, food: [piece(820, 880, { settled: true })] }) !== null, 'cory takes a settled piece');
     const tetra = fish(800, 300, 'tetra');
     ok(flake(tetra.b, { ...ctx(tetra, [tetra]), food: [piece(1100, 880, { settled: true })] }) === null, 'mid feeder leaves far sand food');
+    ok(flake(tetra.b, { ...ctx(tetra, [tetra]), food: [piece(820, 600)] }) === null && flake(tetra.b, { ...ctx(tetra, [tetra]), food: [piece(820, 450)] }) !== null, 'mid feeder lets food sink past its band');
     ok(flake(tetra.b, { ...ctx(tetra, [tetra]), food: [piece(820, 300, { layer: 0 })] }) === null, 'other layer ignored');
 }
 
@@ -78,7 +79,7 @@ for (const n of [0, 1]) {
         ok(Math.abs(255 - (255 - w[0]) * (255 - w[1]) / 255 - 165) < 1.5 && w.every(v => v >= 0 && v <= 165), 'far stack always reads as op');
     }
 }
-// the tame favourite: the most fed once past PET; never flees a slow cursor, hovers closest, ignores taps
+// the tame favourite: the most fed once past PET; never flees a slow cursor, hovers closest
 {
     ok(petOf([3, PET - 1]) === -1 && petOf([PET, PET + 5, PET + 5, 2]) === 1, 'pet = first most-fed past PET');
     let fled = 0, close = 1e9;
@@ -92,17 +93,6 @@ for (const n of [0, 1]) {
     o.b.pet = true;
     for (let i = 0; i < 15 * 6; i++) { tick([o], { p }); if (o.b.state === 'curious') close = Math.min(close, Math.hypot(o.f.x - p.x, o.f.y - p.y)); }
     ok(fled === 0 && close < NEAR * 0.6 + 15, `pet comes, never flees (${fled}, ${close | 0} px)`);
-    tick([o], { p, tap: { x: o.f.x + 30, y: o.f.y, age: 0, n: 1 } });
-    ok(o.b.state !== 'flee', 'a tap does not scare the pet');
-}
-
-// a glass tap: calm fish nearby jump (half a scare, once per tap), fish far off don't
-{
-    const near = fish(800, 450, 'goldfish'), far = fish(100, 100, 'goldfish'), tap = { x: 820, y: 450, age: 0, n: 1 };
-    tick([near], { tap }); tick([far], { tap });
-    ok(near.b.state === 'flee' && near.b.panic <= 0.5 && far.b.state !== 'flee', 'tap startles fish close by only');
-    for (let i = 0; i < 15 * 3; i++) tick([near], { tap: { ...tap, age: 0.1 } });
-    ok(near.b.state !== 'flee', 'one jump per tap, then it calms');
 }
 
 // night torch: small fish come into the light, bottom dwellers slip out of it

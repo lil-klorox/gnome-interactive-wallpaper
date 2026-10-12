@@ -62,6 +62,7 @@ export default class InteractiveWallpaper extends Extension {
         this._on(this._clock, 'new-frame', () => now() - this._last >= FRAME && this._tick());
         this._on(this._settings, 'changed::scene', () => this._load());
         this._on(this._settings, 'changed::live', () => this._live());
+        this._on(this._settings, 'changed::frozen', refresh);
         this._on(this._settings, 'changed::scene-settings', () => this._sceneSettings());
         this._on(this._iface, 'changed::color-scheme', dark);
         // ponytail: any of these re-checks every monitor and window; cheap, so no per-window tracking.
@@ -128,12 +129,23 @@ export default class InteractiveWallpaper extends Extension {
         return Object.hasOwn(SCENES, want) ? want : Object.keys(SCENES)[0];
     }
 
-    // Quick Settings tile: on/off (`live`), scene picker, and a way into the settings window.
+    // Quick Settings tile: on/off (`live`), freeze, scene picker, and a way into the settings window.
     _tile() {
         const ids = Object.keys(SCENES);
         const tog = this._toggle = new QuickSettings.QuickMenuToggle({title: 'Wallpaper', icon_name: ICON, toggle_mode: true});
         this._settings.bind('live', tog, 'checked', Gio.SettingsBindFlags.DEFAULT);
-        tog.menu.setHeader(ICON, 'Live wallpaper');
+        tog.menu.setHeader(ICON, 'Live wallpaper', 'A moving scene instead of your own wallpaper');
+        const frz = new PopupMenu.PopupSwitchMenuItem('Freeze motion (keeps a still picture)', false);
+        frz.connect('toggled', (_i, on) => this._settings.set_boolean('frozen', on));
+        const sync = () => {
+            frz.setToggleState(this._settings.get_boolean('frozen'));
+            frz.setSensitive(this._settings.get_boolean('live'));  // freezing only means something while live
+        };
+        sync();
+        this._on(this._settings, 'changed::frozen', sync);
+        this._on(this._settings, 'changed::live', sync);
+        tog.menu.addMenuItem(frz);
+        tog.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         if (ids.length > 1) {
             const items = ids.map(id => {
                 const it = new PopupMenu.PopupMenuItem(SCENES[id].name);
@@ -292,7 +304,7 @@ export default class InteractiveWallpaper extends Extension {
         // Non-reactive: the pointer is polled in _tick, so desktop clicks/menus are untouched.
         // Starts see-through (the poster shows) and fades in once its art has decoded.
         const root = new Clutter.Actor({width: mon.width, height: mon.height, opacity: keep ? 255 : 0});
-        const t = {root, mon, world: makeWorld(), scene: null, slow: 0, rest: 0, paused: false, dead: false,
+        const t = {root, mon, world: makeWorld(), scene: null, slow: 0, rest: 0, paused: false, dead: false, drawn: false,
             pending: 0, born: now(), last: now(), wake: 0, onSettings: null,
             area: {x: mon.x, y: mon.y, w: mon.width, h: mon.height}};  // work area, global; the real one comes in _update
         t.world.ready = keep;
@@ -350,10 +362,11 @@ export default class InteractiveWallpaper extends Extension {
             w?.meta_window?.get_window_type() === Meta.WindowType.DESKTOP);
     }
 
-    // On window/overview/shield changes: refresh window rects and pause what nobody can see.
+    // On window/overview/shield changes: refresh window rects and pause what nobody can see
+    // (or everything, while `frozen`: the last frame stays on screen, once a tank has drawn one).
     _update() {
         const rects = [], lm = Main.layoutManager;
-        const unseen = Main.overview.visible || !!Main.screenShield?.active;
+        const unseen = Main.overview.visible || !!Main.screenShield?.active, frozen = this._settings.get_boolean('frozen');
         for (const w of global.workspace_manager.get_active_workspace().list_windows()) {
             if (!w.showing_on_its_workspace() || w.get_window_type() === Meta.WindowType.DESKTOP)
                 continue;
@@ -370,7 +383,7 @@ export default class InteractiveWallpaper extends Extension {
             const a = unseen ? null : lm.getWorkAreaForMonitor(t.mon.index), was = t.paused;
             if (a)
                 t.area = {x: a.x, y: a.y, w: a.width, h: a.height};
-            t.paused = !a || covers(rects, t.area);
+            t.paused = (frozen && t.drawn) || !a || covers(rects, t.area);
             if (was && !t.paused)
                 t.last = now();  // the first tick after a pause is one normal frame
             live ||= !t.paused;
@@ -458,6 +471,12 @@ export default class InteractiveWallpaper extends Extension {
                 if (!t.world.ready && (t.pending <= 0 || t0 - t.born > READY_S)) {
                     t.world.ready = true;
                     t.root.ease({opacity: 255, duration: 300});
+                }
+                // Built while frozen: this first ready frame is the one that stays (the fade runs on its own).
+                if (t.world.ready && !t.drawn) {
+                    t.drawn = true;
+                    if (this._settings.get_boolean('frozen'))
+                        this._update();
                 }
                 live = true;
             } catch (e) {

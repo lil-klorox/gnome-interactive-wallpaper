@@ -107,11 +107,10 @@ export class Critters {
                 o.on = true;
                 tank.spots[c.n++] = o;
             },
-            // what makes a shy critter hide: a fast cursor, a glass tap or a dragged window close to (x, y) in screen px
+            // what makes a shy critter hide: a fast cursor or a dragged window close to (x, y) in screen px
             threat(x, y) {
-                const P = c.W.pointer, T = tank.tapAt;
+                const P = c.W.pointer;
                 if (P.over && P.speed > FAST / 2 && Math.hypot(P.x - x, P.y - y) < SEE) return true;
-                if (T && T.age < 0.15 && Math.hypot(T.x - x, T.y - y) < SEE * 1.5) return true;  // a tap on the glass
                 for (const w of c.W.windows)
                     if (w.moving && Math.hypot(Math.max(w.x - x, 0, x - w.x - w.w), Math.max(w.y - y, 0, y - w.y - w.h)) < SEE) return true;
                 return false;

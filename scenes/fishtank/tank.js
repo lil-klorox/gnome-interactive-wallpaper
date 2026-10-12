@@ -3,6 +3,7 @@
 // Also the tank's ambient life (bubbles, motes, plants that bend when brushed) and the world the
 // fish read (fishLayers, swimBounds, sandY, perches, plants, spots, ship, food).
 import Clutter from 'gi://Clutter';
+import Graphene from 'gi://Graphene';
 import St from 'gi://St';
 import { Food } from './food.js';
 import { Critters, night, pt, rng } from './critters.js';
@@ -49,9 +50,7 @@ export class Tank {
         this._rt = new Float64Array(7);  // so motes can light up inside the beams
         this._haze = [];
         this._puffs = [];
-        this._taps = [];
         this._nt = false;
-        this.tapAt = { x: 0, y: 0, age: 99, n: 0 };  // the last tap on the glass
         // a window being dragged: its rect and velocity (px/s); fish, bubbles, food and plants drift in its wake
         this.flow = { x: 0, y: 0, w: 0, h: 0, vx: 0, vy: 0, on: false, kick: 0 };
         this._notes = ctx.world.notifications;
@@ -121,14 +120,6 @@ export class Tank {
             a.set_translation(Math.round(x * s - m.anchor[0]), Math.round((SNAIL_Y - 70) * s - m.anchor[1]), 0);
             return x;
         };
-    }
-
-    // A double click on the glass: a ring blooms there and everything close by jumps (fish read tapAt).
-    tap(x, y) {
-        const T = this.tapAt;
-        T.x = x; T.y = y; T.age = 0; T.n++;
-        const r = this._taps.find(q => q.t <= 0) ?? this._taps[0];
-        if (r) { r.t = 0.5; r.x = x; r.y = y; }
     }
 
     // Sand kicked up at (x, y) screen px: a little cloud that rises and fades (bottom feeders, pellets).
@@ -373,17 +364,23 @@ export class Tank {
         const mir = r() < 0.5 ? -k : k, ph = r() * TAU, sp = 0.35 + r() * 0.25, lean = (r() - 0.5) * 6;
         const holder = new Clutter.Actor({ x, y });
         parent.add_child(holder);
-        const segs = this.chain(holder, name, mir, k);
+        holder.set_scale(mir, k);  // mirrored here, so every segment bends in the same (mirrored) space
+        const segs = this.chain(holder, name);
         if (!segs) { holder.destroy(); return null; }
-        const s = this._s, n = segs.length, last = new Float64Array(n).fill(NaN);
+        const s = this._s, n = segs.length, last = new Float64Array(n).fill(NaN), mtx = new Graphene.Matrix();
         const p = { x: x * s, y: y * s, h: this._m[name].base[1] * k * s, bend: 0, bv: 0 };
-        // 0.1 degree steps, set only on change (the bulk of the slow sway calls); children of a
-        // mirrored root rotate mirrored, so their bend flips sign
+        // Each segment leans by a horizontal shear about its joint, not a rotation: a rotated band
+        // tilts its edge, so a wide leaf or the whole far half of the plant split open at the joint
+        // line. A shear keeps every band edge level, so the bands meet across the full width.
+        const py = segs.map(a => { const y = a.pivot_point.y * a.height; a.set_pivot_point(0, 0); return y; });
+        // 0.1 degree steps, set only on change (the bulk of the slow sway calls)
         p.sway = t => {
             for (let i = 0; i < n; i++) {
                 const v = Math.round(((i ? 0 : lean) + amp * (0.6 + 0.3 * i) * Math.sin(t * sp + ph - i * 0.6) +
-                    p.bend * BEND_DEG / n * (i ? Math.sign(mir) : 1)) * 10) / 10;
-                if (v !== last[i]) segs[i].set_rotation_angle(Clutter.RotateAxis.Z_AXIS, last[i] = v);
+                    p.bend * BEND_DEG / n * Math.sign(mir)) * 10) / 10;
+                if (v === last[i]) continue;
+                const tn = Math.tan((last[i] = v) * Math.PI / 180);
+                segs[i].set_transform(mtx.init_from_2d(1, 0, -tn, 1, tn * py[i], 0));
             }
         };
         this._slow.push(p.sway);
@@ -423,21 +420,8 @@ export class Tank {
             a.set_pivot_point(0.5, 0.5);
             this._rings.push({ a, t: 0, x: 0 });
         }
-        for (let i = 0; i < 2; i++) {  // glass taps: the same ring, round and bigger, on the glass
-            const a = this._actor(this.glassLayer, img, { width: rm.w, height: rm.h, opacity: 0 });
-            a.set_pivot_point(0.5, 0.5);
-            this._taps.push({ a, t: 0, x: 0, y: 0 });
-        }
-        const y = this.swimBounds.y * 0.5 - rm.h / 2, tk = 140 / rm.w * this._s;  // a tap ring ends 140 ref px wide
+        const y = this.swimBounds.y * 0.5 - rm.h / 2;
         this._anims.push((t, dt) => {
-            for (const q of this._taps) {
-                if (q.t <= 0) continue;
-                q.t -= dt;
-                const u = 1 - Math.max(0, q.t) / 0.5, k = (0.25 + 0.75 * u) * tk;
-                q.a.set_translation(q.x - rm.w / 2, q.y - rm.h / 2, 0);
-                q.a.set_scale(k, k * rm.w / rm.h);
-                q.a.set_opacity(Math.round(160 * (1 - u)));
-            }
             for (const q of this._rings) {
                 if (q.t <= 0) continue;
                 q.t -= dt;
@@ -560,7 +544,6 @@ export class Tank {
     }
 
     tick(dt, t) {
-        this.tapAt.age += dt;
         this._flow();
         this._glass(dt);
         for (const f of this._anims) f(t, dt);

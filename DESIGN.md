@@ -37,7 +37,7 @@ render.js            pure: parseManifest, scaleFor, bytesOf, frameOffset, BUDGET
 settings.js          pure: resolve/encode (scene settings), lightsAt, posterPlan
 ctx.js               image(), sheet(), store, settings — the only St.ImageContent code
 prefs.js             settings window: on/off, scene, then the scene's own rows built from its list
-schemas/             keys scene, live, scene-settings, saved-background
+schemas/             keys scene, live, frozen, scene-settings, saved-background
 check.js             `gjs -m check.js`: render/world/settings/poster asserts, then each scenes/*/check.js
 scenes/index.js      {fishtank: {name, load: () => import('./fishtank/scene.js'), settings}, garden: {...}, dot: {...}}
 scenes/garden/       scene.js, sand.js (pure sand math), settings.js, check.js, assets/, blender/
@@ -109,9 +109,11 @@ Store lives at `get_user_data_dir()/interactive-wallpaper/<id>.json`.
 - Reserved keys `lights` (auto|on|off), `lightsOn`, `lightsOff` (time) drive `world.lightsOn/warm` via
   `lightsAt()`; a scene that doesn't declare them gets 06:00-21:00.
 - Other keys: `scene`, `live` (the Quick Settings switch; off = scene unmounted, textures freed,
-  wallpaper restored, extension still enabled), `saved-background` (below).
-- Quick Settings tile (`QuickMenuToggle` in a `SystemIndicator` with no panel icon): on/off, scene
-  picker, "Wallpaper settings…" → `openPreferences()`. `make install` also adds an app-search entry.
+  wallpaper restored, extension still enabled), `frozen` (every monitor takes the normal pause path,
+  so the last frame stays on screen, the scene stays mounted and unfreezing resumes with one normal
+  frame; no poster swap), `saved-background` (below).
+- Quick Settings tile (`QuickMenuToggle` in a `SystemIndicator` with no panel icon): on/off, a
+  "Freeze motion" switch, scene picker, "Wallpaper settings…" → `openPreferences()`. `make install` also adds an app-search entry.
 
 ## Poster wallpaper
 

@@ -22,15 +22,12 @@ export default function create(ctx) {
         tick(dt, t) {
             env.act = ACT[S.activity] ?? 1;
             env.curiosity = S.curiosity !== false;
-            // on bare desktop: a click drops a pinch, a double click taps the glass, holding pours
+            // on bare desktop: a click drops a pinch, holding pours
             const top = P.y < tank.swimBounds.y + 40;
             switch (gesture(g, P, dt)) {
             case 'drop':
                 tank.food.drop(P.x, P.y, S.food ?? 7);
                 if (top) tank.splash(P.x);
-                break;
-            case 'tap':
-                tank.tap(P.x, P.y);
                 break;
             case 'pour':
                 tank.food.drop(P.x, P.y, 1);

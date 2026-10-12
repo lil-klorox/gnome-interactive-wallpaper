@@ -1,5 +1,5 @@
 // Dev-only driver for `dev.sh --headless`: hides the overview, moves a virtual cursor, raises a
-// notification, cycles the target extension off/on, takes screenshots and writes $OUT/stats.txt.
+// notification, cycles the target extension off/on, freezes it for a moment, takes screenshots and writes $OUT/stats.txt.
 // POSTER=1: hide the top bar, take only s0.png at SHOT seconds (default 4), nothing else.
 // RACE=1: lifecycle races (disable mid-decode, double scene switch, 3 monitors-changed in one tick,
 // lock/unlock), then one `race ok` / `race FAIL ...` line: no JS errors, one root per bg actor,
@@ -49,7 +49,7 @@ export default class Probe {
         const move = (x, y) => dev.notify_absolute_motion(GLib.get_monotonic_time(), x, y);
         note(`probe-start rss_mb=${rss().toFixed(1)}`);
         const poster = !!env('POSTER'), shotAt = Math.round(2 * Number(env('SHOT') || 4));
-        let i = 0, act, idle, ov;
+        let i = 0, act, idle, ov, fz;
         if (env('RACE')) {
             this._race(note, stats, em, uuid, out);
             return;
@@ -72,8 +72,16 @@ export default class Probe {
             if (i === 28) { snap('disabled'); em.enableExtension(uuid); }
             if (i === 34) { snap('re-enabled'); em.disableExtension(uuid); }
             if (i === 36) em.enableExtension(uuid);
-            if (i === 42) snap('re-enabled-2');
-            const k = i - 44;  // SOAK=n: n more off/on cycles, 3 s each, RSS after a GC
+            if (i === 42) { snap('re-enabled-2'); em.lookup(uuid).stateObj.getSettings().set_boolean('frozen', true); fz = rate(); }
+            if (i === 43) { rate('frozen', fz); em.disableExtension(uuid); }  // should be 0
+            if (i === 44) em.enableExtension(uuid);  // built while frozen: must still draw once and fade in
+            if (i === 50) fz = rate();  // past READY_S
+            if (i === 52) {
+                const x = em.lookup(uuid).stateObj;
+                rate(`frozen-build ready=${x._tanks.every(t => !t || t.world.ready && t.root?.opacity === 255)}`, fz);  // should be true, 0
+                x.getSettings().set_boolean('frozen', false);
+            }
+            const k = i - 53;  // SOAK=n: n more off/on cycles, 3 s each, RSS after a GC
             if (k >= 0 && k < soak * 6) {
                 if (k % 6 === 0) em.disableExtension(uuid);
                 if (k % 6 === 1) em.enableExtension(uuid);
