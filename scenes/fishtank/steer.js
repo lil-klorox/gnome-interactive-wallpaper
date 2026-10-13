@@ -1,6 +1,4 @@
-// Fish motion: turns a brain intent into movement (burst-and-coast wander, seek, flee, bounds,
-// depth band, separation, schooling + loose shoaling, turn limits). Knows nothing about moods.
-// Pure math, no gi imports.
+// Fish motion: turns a brain intent into movement. Knows nothing about moods. Pure math, no gi.
 
 // o: {x, y, cruise px/s, turn rad/s, pad px, school id, burst s, coast s, coastG: coast gait
 //     (0 = stops between bursts), accel: x cruise px/s² limit, hop: bursts kick upward (mandarin)}
@@ -15,7 +13,9 @@ export function makeFish(o, rand = Math.random) {
     };
 }
 
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+import { clamp } from '../../bend.js';
+// Manifest points are untrusted: one bad point skips that sprite, not the rest of the scenery.
+export const pt = p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite);
 export const FLOW = 180;  // px from a dragged window's edge its current still reaches
 
 // How hard a dragged window's current {x, y, w, h} pushes the point (x, y): 0.35 at the window, 0 at FLOW px.
@@ -26,10 +26,8 @@ export function drift(fl, x, y) {
 
 // Body crossfade weights (fish.js) for two stacked sprite frames at blend t (0..1): the lower
 // frame stays solid until halfway, the upper is fully in by then, so the body never turns
-// see-through mid-blend (a plain (1-t, t) split leaves it 75 % opaque at t = 0.5).
-// bug fix: see-through (far) fish kept the lower frame at op under the upper one, so the stack read
-// up to 35 % more solid mid-blend and far fish flickered with every frame step and burst; now the lower
-// gives way so the two together are exactly op, done by halfway.
+// see-through mid-blend (a plain (1-t, t) split leaves it 75 % opaque at t = 0.5). Below 255 the lower
+// frame gives way so the pair sums to op.
 export const blend = (t, op, out) => {
     const b = op * Math.min(1, 2 * t);
     out[0] = Math.round(op < 255 ? 255 * (op - b) / (255 - b) : op * Math.min(1, 2 - 2 * t));
@@ -77,9 +75,8 @@ export function step(f, dt, it, b, all, rand = Math.random) {
     ay += py;
     if (wander && it.band) ay += (push(b.y + b.h * it.band[0] - f.y) - push(f.y - b.y - b.h * it.band[1])) * 0.5;
 
-    // separation from layer-mates; tight cohesion + alignment with own school, and loose wide
-    // shoaling with any species nearby, weighted by intent.shoal. Mates in the blind spot behind
-    // don't pull, so leaders emerge.
+    // separation, school cohesion + alignment, loose shoaling (intent.shoal); mates in the blind spot
+    // behind don't pull, so leaders emerge
     const sh = it.shoal ?? 0, cd = Math.cos(f.dir), sd = Math.sin(f.dir);
     let sn = 0, sx = 0, sy = 0, svx = 0, svy = 0, hn = 0, hx = 0, hy = 0, hvx = 0, hvy = 0;  // school, shoal sums
     for (const o of all) {

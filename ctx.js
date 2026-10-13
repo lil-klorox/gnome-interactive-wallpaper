@@ -1,4 +1,4 @@
-// The ctx a scene gets: textures (the only St.ImageContent code) and a per-scene JSON store.
+// The ctx a scene gets (contract: docs/writing-a-scene.md). The only St.ImageContent code.
 import Clutter from 'gi://Clutter';
 import Cogl from 'gi://Cogl';
 import GdkPixbuf from 'gi://GdkPixbuf';
@@ -6,12 +6,12 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import St from 'gi://St';
 import {PACKAGE_VERSION} from 'resource:///org/gnome/shell/misc/config.js';
-import {parseManifest, sizeAt, frameOffset, canvasBytes, tileRange, BUDGET} from './render.js';
+import {parseManifest, sizeAt, frameOffset, canvasBytes, tileRange, BUDGET, int} from './render.js';
+import {STORE_MAX, parseStore} from './settings.js';
 
-const STORE_MAX = 64 * 1024;
 const warn = msg => console.warn(`interactive-wallpaper: ${msg}`);
 
-// One small sync read when a scene mounts. No manifest = a scene without art.
+// No manifest = a scene without art.
 export function loadManifest(dir) {
     const f = dir.get_child('assets').get_child('manifest.json');
     if (!f.query_exists(null))
@@ -32,8 +32,7 @@ function upload(content, bytes, format, w, h, stride) {
 const uploadPixbuf = (content, pb) => upload(content, pb.read_pixel_bytes(),
     pb.has_alpha ? Cogl.PixelFormat.RGBA_8888 : Cogl.PixelFormat.RGB_888, pb.width, pb.height, pb.rowstride);
 
-// Content is created now and stays empty (paints nothing) until the PNG decodes off the hot path.
-// rec.done turns true when the decode ends either way; rec.cbs run then (they count pending decodes).
+// Content paints nothing until the PNG decodes. rec.cbs run when the decode ends either way.
 function load(sc, cancel, name) {
     const e = sc.man.images[name];
     if (!e)
@@ -66,8 +65,8 @@ function load(sc, cancel, name) {
     return rec;
 }
 
-// Kept across disable/enable so a quick lock/unlock reads what the last session just saved, not the
-// disk copy its save hasn't replaced yet. At most 64 KB per scene.
+// Accepted module-level state: kept across disable/enable so a lock/unlock reads the last save, not
+// the disk copy it hasn't replaced yet. A disk edit while disabled is ignored until the shell restarts.
 const STORES = new Map();
 const storeFor = id => STORES.get(id) ?? STORES.set(id, store(id)).get(id);
 
@@ -106,8 +105,9 @@ function store(id) {
                 return data;
             try {
                 const raw = file.load_contents(null)[1];
-                const v = raw.length <= STORE_MAX ? JSON.parse(new TextDecoder().decode(raw)) : warn(`${id} store over 64 KB, ignored`);
-                data = v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+                if (raw.length > STORE_MAX)
+                    warn(`${id} store over 64 KB, ignored`);
+                data = parseStore(raw);
             } catch {
                 data = {};
             }
@@ -125,11 +125,9 @@ function store(id) {
     };
 }
 
-// A grid of textures the scene paints itself from bytes (see docs/writing-a-scene.md, Canvas). The
-// scene keeps its own state (a height field, say) and refills only the tiles it marked dirty.
+// ctx.canvas: tiles the scene paints from bytes; only dirty tiles are refilled.
 function canvas(sc, root, opts) {
     const {w, h, tile = 256, px = 1} = opts ?? {};
-    const int = (v, max) => Number.isInteger(v) && v > 0 && v <= max;
     if (!int(w, 16384) || !int(h, 16384) || !int(tile, 1024) || !(px > 0 && px <= 64))
         throw new Error('canvas needs whole w, h, tile and a positive px');
     const cols = Math.ceil(w / tile), rows = Math.ceil(h / tile), bytes = canvasBytes(w, h, tile);
@@ -183,9 +181,7 @@ function canvas(sc, root, opts) {
     });
 }
 
-// sc = {id, dir, man, k, art, canvas, settings} (one per mounted scene; art/canvas = texture bytes);
-// cache + cancel live on the extension instance, so every monitor and every sprite of a sheet share one
-// texture. t = the host's per-monitor record: {root, world, pending, onSettings}. monitor = {index, count, primary}.
+// cache lives on the extension, so every monitor and sprite share one texture per image.
 export function makeCtx(sc, cache, cancel, t, w, h, monitor) {
     const image = (name, fallback) => {
         if (!sc.man.images[name] && fallback !== undefined && sc.man.images[fallback]) {
@@ -229,5 +225,5 @@ export function makeCtx(sc, cache, cancel, t, w, h, monitor) {
     };
     return Object.freeze({root: t.root, w, h, ref: sc.man.ref, images: sc.man.images, world: t.world, image, sheet,
         monitor, canvas: opts => canvas(sc, t.root, opts),
-        store: (sc.store ??= storeFor(sc.id)), settings: sc.settings, onSettings: fn => (t.onSettings = fn)});
+        store: storeFor(sc.id), settings: sc.settings, onSettings: fn => (t.onSettings = fn)});
 }

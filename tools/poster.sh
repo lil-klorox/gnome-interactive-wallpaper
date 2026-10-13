@@ -1,10 +1,6 @@
 #!/bin/sh
-# Make scenes/<SCENE>/poster.jpg (noon) and poster-dark.jpg (23:00) from headless runs. While the
-# scene runs, the poster is GNOME's own wallpaper, so the lock screen, overview and workspace switch
-# show the scene instead of the default blue. The engine shows poster-dark.jpg while the scene's lights are
-# off. Scenery only (settings with a `still` value use it, e.g. no fish), so the live scene adds the
-# wildlife on top instead of moving it. SIZE=<your monitor> makes the overview line up pixel-exact.
-# Env: SCENE (fishtank), SIZE (3440x1440), SHOT (10 s).
+# Make scenes/<SCENE>/poster.jpg (noon) and poster-dark.jpg (23:00), scenery only (`still` values),
+# from headless runs. SIZE=<your monitor> makes the overview line up exactly. Env: SCENE, SIZE, SHOT.
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 scene=${SCENE:-fishtank} size=${SIZE:-3440x1440} shot=${SHOT:-10}
@@ -22,7 +18,7 @@ for name in poster:12 poster-dark:23; do
     png="$tmp/${name%:*}/s0.png" jpg="$tmp/${name%:*}.jpg"
     [ -s "$png" ] || { echo "no screenshot for ${name%:*}, see $tmp/${name%:*}/log" >&2
         mv "$tmp"/old/* "$dst/" 2>/dev/null || true; trap - EXIT; exit 1; }
-    gjs -c 'imports.gi.GdkPixbuf.Pixbuf.new_from_file(ARGV[0]).savev(ARGV[1], "jpeg", ["quality"], ["90"])' "$png" "$jpg"
+    timeout -k 5 30 gjs -c 'imports.gi.GdkPixbuf.Pixbuf.new_from_file(ARGV[0]).savev(ARGV[1], "jpeg", ["quality"], ["90"])' "$png" "$jpg"
 done
 rm -rf "$tmp/old"
 mv "$tmp/poster.jpg" "$tmp/poster-dark.jpg" "$dst/"

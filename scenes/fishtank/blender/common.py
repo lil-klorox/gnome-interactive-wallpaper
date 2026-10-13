@@ -1,5 +1,10 @@
-# Shared render setup so scenery and fish share one camera, light rig and look.
+# Shared render setup so scenery and fish share one camera, light rig and look. These headless bpy
+# scripts are the source of truth for assets/; runtime never needs Blender.
 # Run scripts as: blender -b --factory-startup -P blender/<script>.py
+# sprite() renders + crops + maps points; manifest() writes one entry (flock'd, adds px). scene_*.py =
+# one prop each; fish.py [species ...] = swim frames x yaws (profile -> front, runtime mirrors the rest),
+# per-frame eye points, puffer inflation sheet. Look: fully lit, solid, a little dorky but detailed
+# (wear, moss, grime, translucent fins), no plastic CG; light, density (PPU at ref) and haze are shared.
 import fcntl
 import json
 import math
@@ -533,6 +538,30 @@ def manifest(name, ent):
         f.seek(0)
         f.truncate()
         f.write(json.dumps(data, separators=(',', ':'), sort_keys=True))
+
+
+def still(name, w, h, fn, ss=4):
+    """Numpy still: fn(x, y) -> (rgb, alpha) on a ss-times supersampled grid, x/y in -1..1."""
+    y, x = np.mgrid[0:h * ss, 0:w * ss].astype(np.float32)
+    x, y = (x + 0.5) / (w * ss) * 2 - 1, (y + 0.5) / (h * ss) * 2 - 1
+    rgb, a = fn(x, y)
+    px = np.zeros((h * ss, w * ss, 4), np.float32)
+    px[..., :3], px[..., 3] = np.asarray(rgb, np.float32) * a[..., None], a
+    px = px.reshape(h, ss, w, ss, 4).mean((1, 3))
+    px[..., :3] /= np.maximum(px[..., 3:], 1e-6)
+    save_png(np.clip(px, 0, 1), os.path.join(ASSETS, name + '.png'))
+    manifest(name, {'w': w, 'h': h})
+
+
+def hidpi(name):
+    """2x render kept as the texture; w/h and 2-number points halved."""
+    with open(os.path.join(ASSETS, 'manifest.json')) as f:
+        ent = json.load(f)['images'][name]
+    ent = {k: [round(v[0] / 2, 1), round(v[1] / 2, 1)] if isinstance(v, list) and len(v) == 2 and k != 'px' else v
+           for k, v in ent.items()}
+    ent.update(w=ent['w'] / 2, h=ent['h'] / 2)
+    manifest(name, ent)
+    print('hidpi', name, ent)
 
 
 def seed(n):

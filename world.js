@@ -1,5 +1,5 @@
-// Pure (no gi): the per-monitor snapshot scenes read. The host fills `raw` each tick, in global
-// coords plus the monitor box (mx, my, mw, mh); update() makes everything monitor-local.
+// Pure: the per-monitor `world` scenes read (docs/writing-a-scene.md). update() turns the host's
+// global `raw` into monitor-local values.
 export const makeWorld = () => ({
     pointer: {x: 0, y: 0, speed: 0, over: false, down: false},
     windows: [],  // [{x, y, w, h, moving, id, vx, vy, age}]
@@ -22,8 +22,7 @@ export function update(world, raw, dt) {
     p.y = y;
     p.over = over;
     p.down = raw.down;
-    // Window motion is smoothed like pointer.speed. Windows already there on this world's first update
-    // count as old (age 3600), so a fresh build doesn't treat every window as just opened.
+    // Windows present at the first update count as old (age 3600), not just opened.
     const seen = world._seen, first = world._gen === 0, gen = ++world._gen, idt = 1 / Math.max(dt, 0.001);
     let n = 0;
     for (const r of raw.rects) {
@@ -75,8 +74,7 @@ export function update(world, raw, dt) {
     world.warm = raw.lights.warm;
 }
 
-// True when the rects {x, y, w, h} together cover all of area a (so tiled windows count too).
-// Splits a into vertical strips at every rect edge and checks each strip top to bottom.
+// True when the rects together cover area a (tiled windows count): checks a strip per rect edge.
 export function covers(rects, a) {
     const r = rects.filter(q => q.x < a.x + a.w && q.x + q.w > a.x && q.y < a.y + a.h && q.y + q.h > a.y);
     const xs = [...new Set([a.x, a.x + a.w, ...r.flatMap(q => [q.x, q.x + q.w])])]

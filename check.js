@@ -1,5 +1,5 @@
-import Gio from 'gi://Gio';
 // `gjs -m check.js`: host math, then every scene's own check.
+import Gio from 'gi://Gio';
 import {parseManifest, scaleFor, bytesOf, frameOffset, maxHeight, canvasBytes, tileRange, BUDGET} from './render.js';
 import {spacing, heading, shear, spring} from './bend.js';
 import {makeWorld, update, covers, changed} from './world.js';
@@ -16,7 +16,8 @@ ok(bytesOf(big, scaleFor(1440, 1440, bytesOf(big, 1), 64e6)) <= 64e6, 'over-budg
 ok(String(frameOffset({w: 160, h: 96, n: 64, cols: 8}, 9)) === '160,96', 'frame 9 is row 1 col 1');
 const m = parseManifest('{"ref":1440,"images":{"a":{"w":"x"},"b":{"w":1,"h":1},"../c":{"w":1,"h":1},"d":{"w":1,"h":1,"n":4,"cols":5},"e":null,"f":{"w":1,"h":1,"n":5000}}}');
 ok(Object.keys(m.images).join() === 'b' && m.images.b.n === 1 && m.images.b.cols === 1, 'bad entries dropped');
-ok(BUDGET === 100e6, 'budget');
+const pts = parseManifest('{"ref":1,"images":{"a":{"w":1,"h":1,"base":[1,"x"],"eyes":[[1,2]],"foot":[0,0,1,1]}}}').images.a;
+ok(pts.base === undefined && pts.eyes && pts.foot, 'non-numeric point dropped, numeric lists kept');
 ok(String(parseManifest('{"ref":1440,"images":{"a":{"w":10.5,"h":4,"n":3,"cols":2}}}').images.a.px) === '21,8', 'px-less entry: px from w·cols × h·rows');
 ok(maxHeight([], false) === 0 && maxHeight([{height: 720, geometry_scale: 2}, {height: 1080}], false) === 1440, 'no monitors = 0, not -Infinity; scale applied');
 

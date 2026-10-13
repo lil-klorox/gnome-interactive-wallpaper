@@ -1,10 +1,7 @@
-// Fish food (no gi imports: check.js runs it with stub actors). A click drops a pinch of flakes and
-// pellets; each falls in its own depth layer, rocking and flipping as a flat flake does (the sheet's
-// tumble frame is locked to the rock), softens and sheds crumbs, and lands on the floor at its own
-// depth in that layer's sand band (so leftovers scatter over the sand instead of lining up), or on a
-// rock/chest top for a few seconds before it slides off. Then it sinks in a touch and fades.
-// Fish (fish.js) and shrimp/hermit (critters.js) read `pieces`, claim them and call bite()/kick().
-// A pellet landing on the front sand kicks up a little puff (tank.puff, if the tank has one).
+// Fish food (no gi: check.js runs it with stub actors). A click drops a pinch that sinks, lands on the
+// sand or briefly on a rock top, and fades; fish and critters read `pieces` and call bite()/kick().
+import { pt } from './steer.js';
+
 export const POOL = 24;
 const CRUMBS = 9;          // per layer
 const TAU = Math.PI * 2;
@@ -47,11 +44,11 @@ export class Food {
         const e = ctx.images.food, ok = e && e.n === KINDS * 8 && e.cols === 8;
         if (e && !ok) console.warn('fishtank: food art has the wrong shape, pieces are invisible');
         this._sh = ok ? ctx.sheet('food') : null;
-        const an = this._sh && Array.isArray(e.anchor) && e.anchor.every(Number.isFinite) ? e.anchor : [e?.w / 2, e?.h / 2];
+        const an = this._sh && pt(e.anchor) ? e.anchor : [e?.w / 2, e?.h / 2];
         this._an = an;
         for (let i = 0; i < POOL; i++) {
             // z: depth in the sand band (0 back .. 1 front); perch: s left on a rock top; top: which one
-            this.pieces.push({ live: false, layer: 1, kind: 0, size: 1, x: 0, y: 0, vy: 0, phi: 0, w: 0, bites: 0,
+            this.pieces.push({ i, live: false, layer: 1, kind: 0, size: 1, x: 0, y: 0, vy: 0, phi: 0, w: 0, bites: 0,
                 settled: false, fade: 0, claims: 0, age: 0, born: 0, z: 0, perch: 0, top: -1, slid: false });
             const a = this._sh?.make() ?? null;
             if (a) {
@@ -84,7 +81,7 @@ export class Food {
                 for (const q of this.pieces) if (q.settled && (!p || q.born < p.born)) p = q;
                 if (!p) return;
             }
-            const i = this.pieces.indexOf(p), kind = Math.min(KINDS - 1, r() * KINDS | 0);
+            const i = p.i, kind = Math.min(KINDS - 1, r() * KINDS | 0);
             p.x = x + (r() - 0.5) * 80;
             p.y = Math.min(b.y + b.h, Math.max(b.y * 0.5, y + (r() - 0.5) * 30));
             p.z = r();
@@ -107,28 +104,36 @@ export class Food {
 
     // A real bite: the piece shrinks (smoothly, see tick) and a crumb or two flies; the third bite
     // finishes it, and it shrinks away to nothing at the mouth instead of blinking out.
-    bite(k) {
-        const p = typeof k === 'number' ? this.pieces[k] : k;
-        if (!p?.live) return false;
+    bite(p) {
+        if (!p.live) return false;
         p.bites++;
         p.size *= 0.7;
         for (let j = 0; j < 2; j++) this._crumb(p);
-        if (p.bites >= 3) { p.live = false; this._a[this.pieces.indexOf(p)].gone = 1; }
+        if (p.bites >= 3) { p.live = false; this._a[p.i].gone = 1; }
         return true;
     }
 
     // Nudge a piece sideways (a missed snap, a fish swimming through it); a settled one hops up a little.
-    kick(k, vx) {
-        const p = typeof k === 'number' ? this.pieces[k] : k;
-        if (!p?.live) return;
-        this._kx[this.pieces.indexOf(p)] += vx;
+    kick(p, vx) {
+        if (!p.live) return;
+        this._kx[p.i] += vx;
         if (p.settled) { p.settled = false; p.y -= 4; p.fade = 0; p.slid ||= p.perch > 0; p.perch = 0; }
     }
 
     _kill(p) {
         p.live = false;
-        const s = this._a[this.pieces.indexOf(p)];
+        const s = this._a[p.i];
         if (s.a) s.a.visible = false;
+    }
+
+    // Unseen for gap s: landed food is gone by now, sinking food has sunk (the next tick lands it). A piece
+    // on a rock top keeps its fade for the sand.
+    skip(gap) {
+        for (const p of this.pieces) {
+            if (!p.live) continue;
+            if (!p.settled) p.y += p.vy * Math.min(gap, 20);
+            else if (!p.perch) p.fade += gap;
+        }
     }
 
     _crumb(p) {
@@ -175,7 +180,7 @@ export class Food {
                 }
                 if (!p.settled && p.y >= floor) {  // sinks in a touch
                     p.y = floor + 2; p.settled = true;
-                    if (pellet && p.layer) T.puff?.(p.x, p.y);
+                    if (pellet && p.layer) T.puff(p.x, p.y);
                 }
             } else if (p.perch > 0) {  // on a rock: rests, then slides off the nearer edge and falls on
                 const o = T.tops[p.top];

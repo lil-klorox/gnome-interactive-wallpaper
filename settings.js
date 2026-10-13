@@ -1,18 +1,20 @@
-// Pure (no gi): scene settings, the lights schedule and the poster wallpaper plan.
-// Read by extension.js and prefs.js, checked by check.js.
-const JSON_MAX = 64 * 1024;
+// Pure (no gi, prefs loads it too): scene settings, lights schedule, poster plan, store parsing.
+export const STORE_MAX = 64 * 1024;  // also caps the scene-settings JSON
 const WARM = 45;  // minutes either side of an automatic light switch that get the warm tint
 export const POSTER_COLOR = '#031a26';  // shown before the poster decodes, instead of GNOME's blue
 
 const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
 const parse = text => {
     try {
-        const v = typeof text === 'string' && text.length <= JSON_MAX ? JSON.parse(text) : null;
+        const v = typeof text === 'string' && text.length <= STORE_MAX ? JSON.parse(text) : null;
         return isObj(v) ? v : {};
     } catch {
         return {};
     }
 };
+
+// A scene's store file bytes -> object; too big or bad = {}.
+export const parseStore = raw => (raw.length <= STORE_MAX ? parse(new TextDecoder().decode(raw)) : {});
 
 // The checked value, or undefined when it doesn't fit the declaration.
 function valid(d, v) {
@@ -40,8 +42,7 @@ function valid(d, v) {
     return undefined;
 }
 
-// The trust boundary for the `scene-settings` key: every declared key gets a valid value (clamped,
-// snapped, or its default), unknown keys are dropped, bad JSON means all defaults. Never throws.
+// Trust boundary for `scene-settings`: every declared key valid (clamped/snapped/default). Never throws.
 export function resolve(decl, json, id) {
     const all = parse(json), src = Object.hasOwn(all, id) && isObj(all[id]) ? all[id] : {}, out = {};
     for (const d of decl) {
@@ -66,9 +67,7 @@ export function encode(decl, json, id, values) {
     return JSON.stringify(all);
 }
 
-// A `log` row's lines: the list at `d.path` in the scene's store, entries {day: 'YYYY-MM-DD', kind}
-// whose kind is in `d.kinds` (kind -> sentence), newest first, at most `d.max` (7). The store file is
-// outside input here (prefs reads it from disk), so anything odd is skipped. Never throws.
+// A `log` row's lines from the store (outside input: odd entries skipped), newest first. Never throws.
 export function logLines(d, store) {
     let v = store;
     for (const k of d.path ?? [])
@@ -82,9 +81,7 @@ export function logLines(d, store) {
         .map(e => ({day: e.day, text: kinds[e.kind]}));
 }
 
-// Lights at `min` (minutes since midnight). mode auto|on|off; on/off are switch times. Auto with
-// on === off means always on; off before on means the lit part wraps past midnight.
-// out: pass a reused object to keep per-tick calls allocation-free.
+// Lights at `min` (minutes since midnight); on === off = always on. Reuse `out` to stay allocation-free.
 export function lightsAt(min, mode, on, off, out = {on: true, warm: false}) {
     const auto = mode !== 'on' && mode !== 'off', span = (off - on + 1440) % 1440;
     const near = m => Math.min((min - m + 1440) % 1440, (m - min + 1440) % 1440) < WARM;
@@ -95,11 +92,8 @@ export function lightsAt(min, mode, on, off, out = {on: true, warm: false}) {
 
 const BG = ['uri', 'dark', 'options', 'color'];
 
-// What to do with GNOME's wallpaper keys. cur = {uri, dark, options, color} now; saved = our
-// `saved-background` text; poster = {uri, dark?} for the scene, or null = turning off; base = a path
-// piece only our scene folders contain (survives a changed install location). Turning on: save the user's wallpaper (never one of ours) and apply
-// the poster. Turning off: put the saved one back, but only if ours is still showing; if ours shows
-// and nothing valid was saved, reset GNOME's keys to their defaults.
+// What to do with GNOME's wallpaper keys; poster null = turning off; base = a path piece only our scenes have.
+// Turning on saves+applies; off restores only if ours is showing (reset if nothing valid was saved).
 export function posterPlan(cur, saved, poster, base) {
     const ours = u => typeof u === 'string' && u.includes(base);
     // Someone set only picture-uri while we ran: their uri stands in for our leftover dark one.

@@ -2,9 +2,10 @@
 // `gjs -m fish-check.js`, or imported by check.js. No gi.
 import { makeBrain, think, flake, PERSONALITY, petOf, PET, NEAR, SEE } from './brain.js';
 import { makeFish, step, blend, resume } from './steer.js';
+import { rng } from './critters.js';
 
-let seed = 7;
-const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const rand = rng(7);
+let born = 0;
 const ok = (c, msg) => { if (!c) throw new Error('FAIL fish: ' + msg); };
 const B = { x: 0, y: 0, w: 1600, h: 900 }, dt = 1 / 15;
 const fish = (x, y, name, o = {}) => ({ f: makeFish({ x, y, cruise: 60, pad: 20, ...o }, rand), b: makeBrain(PERSONALITY[name], rand) });
@@ -12,7 +13,7 @@ const ctx = (o, mates, w = {}) => ({ f: o.f, p: null, b: B, mates, dt, rand, lay
 const tick = (all, w) => { for (const o of all) step(o.f, dt, think(o.b, ctx(o, all, w)), B, all.map(m => m.f), rand); };
 
 // food stub with the food.js shape: 3 bites finish a piece
-const piece = (x, y, o = {}) => ({ live: true, layer: 1, x, y, claims: 0, bites: 0, settled: false, born: seed++, ...o });
+const piece = (x, y, o = {}) => ({ live: true, layer: 1, x, y, claims: 0, bites: 0, settled: false, born: born++, ...o });
 const feeder = { bite: k => k.live && (++k.bites >= 3 && (k.live = false), true), kick: () => {} };
 
 // claims: one fish per piece, and a sinking pinch (25 px/s, the food.js rate) is caught before the sand

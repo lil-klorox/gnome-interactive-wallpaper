@@ -1,4 +1,4 @@
-// `make uninstall` runs this first: enable() never runs again after an uninstall, so a poster left as
+// `make uninstall` runs this after disabling, as a net: enable() never runs again after an uninstall, so a poster left as
 // GNOME's wallpaper would point at a deleted file. Puts the saved wallpaper back, only if ours shows.
 // Usage: gjs -m tools/restore-wallpaper.js <schemas dir> <uuid>
 import Gio from 'gi://Gio';

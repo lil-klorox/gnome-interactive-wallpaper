@@ -8,14 +8,14 @@ import Clutter from 'gi://Clutter';
 import St from 'gi://St';
 import Cairo from 'cairo';
 import { makeBrain, think, PERSONALITY, drowsy, lazy, petOf, release } from './brain.js';
-import { makeFish, step, blend, drift, spotOf, here, resume, coast } from './steer.js';
-import { pt } from './tank.js';
+import { makeFish, step, blend, drift, spotOf, here, resume, coast, pt } from './steer.js';
+import { clamp } from '../../bend.js';
 
 // n: default count (settings override); cruise px/s at full size; burst/coast: wander gait s;
 // turn rad/s; school: id; morph: optional colour sheet `<name>-<morph>`; rate: x tail beat;
 // rateMin: tail never slower (fluttering pectorals); accel: x cruise px/s² limit; coastG: coast
 // gait (0 = stops between bursts); hop: bursts kick off the sand; finRate: tail rate when resting;
-// snap: nearest frame, no crossfade (see-through fins double up mid-blend).
+// snap: nearest frame, no crossfade (see-through fins double up mid-blend); glass: clings to the glass.
 const SPECIES = [
     { name: 'clown', n: 2, cruise: 70, burst: 0.4, coast: 2 },
     { name: 'tetra', n: 6, cruise: 90, burst: 0.3, coast: 1.2, school: 'tetra' },
@@ -28,13 +28,12 @@ const SPECIES = [
     { name: 'lionfish', n: 1, cruise: 35, burst: 0.3, coast: 5, turn: 1.0, snap: true },
     { name: 'discus', n: 2, cruise: 50, burst: 0.5, coast: 5, turn: 1.2, school: 'discus', accel: 2 },
     { name: 'guppy', n: 5, cruise: 95, burst: 0.2, coast: 0.8, turn: 3, school: 'guppy', rate: 1.4 },
-    { name: 'pleco', n: 1, cruise: 40, burst: 0.3, coast: 3, turn: 1.5, coastG: 0, finRate: 0.15 },
+    { name: 'pleco', n: 1, cruise: 40, burst: 0.3, coast: 3, turn: 1.5, coastG: 0, finRate: 0.15, glass: true },
     { name: 'mandarin', n: 1, cruise: 30, burst: 0.15, coast: 2.5, turn: 2.5, hop: true, rateMin: 1 },
 ];
 const MAX_N = 8;           // per species, whatever the settings say
 const YAW_RATE = 3.5;      // rad/s base swing round through the front view (calibration knob)
 const CURL = [0.16, 0.66]; // tail phase that bends the body into a turn, by turn direction
-const CURL_ON = 1;         // 0 = no curl while turning
 const NOD = 0.14;          // rad nose-down on a bite
 const FAR = { scale: 0.7, opacity: 165 };
 const SHADOW = 150;        // px above the sand a fish still casts a shadow
@@ -49,8 +48,7 @@ const HALF = Math.PI / 2;
 const valid = (r, now) => Number.isFinite(r?.born) && r.born <= now && Number.isInteger(r?.fed) && r.fed >= 0;
 const record = (r, now) => valid(r, now) ? { born: r.born, fed: Math.min(r.fed, 1e6) } : { born: now, fed: 0 };
 // ids of fish that can exist (species name + index): a species set to 0 keeps its saved history
-const ID = new RegExp(`^(${SPECIES.map(s => s.name).join('|')})[0-7]$`);
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const ID = new RegExp(`^(${SPECIES.map(s => s.name).join('|')})[0-${MAX_N - 1}]$`);  // ponytail: one digit, MAX_N <= 10
 const obj = v => v && typeof v === 'object' && !Array.isArray(v) ? v : {};
 // Size by age in days: fast at first (the first week shows it), full size at GROW days.
 export const grown = days => 0.6 + 0.4 * Math.min(1, Math.log1p(Math.max(0, days)) / Math.log1p(GROW));
@@ -90,7 +88,7 @@ export class School {
         const b = this._b = tank.swimBounds;
         this._ctx = ctx;
         this._tank = tank;
-        this._env = env ?? { act: 1, curiosity: true };
+        this._env = env;
         this._fish = [];
         this._mates = [[], []];   // [{f, b}] per layer, for brains
         this._motion = [[], []];  // motion states per layer, for steering
@@ -117,12 +115,18 @@ export class School {
         this._attnT = 0;
         this._attn = { x: b.x + b.w / 2, y: b.y + 20 };  // where the banner lands
         this._n = 0;
-        this._wake = this._news = 0;  // one-shot signals held 2 ticks, so each half of the school sees them once
+        this._wake = this._news = 0;  // one-shot signals held THINK ticks, so each third of the school sees them once
         this._fedSum = -1;  // -1: save once soon, so first-seen fish keep their birthday
         this._saved = 0;
         this._c = { f: null, p: null, b, mates: null, dt: 0, rand: Math.random, threats: this._threats, food: null,
-            feeder: tank.food ?? null, layer: 1, attn: null, attnNew: false, wake: false, drowsy: 1, lazy: 1, night: false,
-            act: 1, curiosity: true, spots: null, perches: tank.perches ?? null };
+            feeder: tank.food, layer: 1, attn: null, attnNew: false, wake: false, drowsy: 1, lazy: 1, night: false,
+            act: 1, curiosity: true, spots: null, perches: tank.perches };
+    }
+
+    // Share of fish in the far layer.
+    get farShare() {
+        const [far, near] = this._mates;
+        return far.length / Math.max(1, far.length + near.length);
     }
 
     // Live settings: a count adds or drops fish, a colour remakes that species where its fish were.
@@ -161,7 +165,7 @@ export class School {
             try {
                 this._spawn(sp, i, m, sp.school ? hx + Math.random() * 80 : b.x + Math.random() * b.w,
                     sp.school ? hy + Math.random() * 40 : bandY(), now);
-            } catch (e) {  // bug fix (kept): one bad sheet must not kill the whole scene
+            } catch (e) {  // one bad sheet must not kill the scene
                 failed.push(`${sp.name} (${e.message})`);
                 return;
             }
@@ -193,7 +197,7 @@ export class School {
             puff: 0, look: [0, 0], cur: null, rot: null, mirror: null, scale: null, tx: NaN, ty: NaN, it: null, acc: 0, bodies,
             shadow: layer && shadow ? this._makeShadow(m, sc, tank.fishLayers[1]) : null, glass: null };
         f.goal = f.yaw;
-        if (sp.name === 'pleco') f.glass = this._makeGlass(tank.glassLayer);
+        if (sp.glass) f.glass = this._makeGlass(tank.glassLayer);
         this._fish.push(f);
         this._mates[layer].push({ f: s, b: brain });
         this._motion[layer].push(s);
@@ -204,6 +208,7 @@ export class School {
         f.shadow?.a.destroy();
         f.glass?.a.destroy();
         release(f.brain);  // its claimed food is free again
+        this._store[f.id].fed = f.brain.fed;  // a re-add reads the store, not this brain
         this._spots[f.id] = { ...here(f.s, this._b, Date.now()), layer: f.layer };  // comes back here if added again
         this._fish.splice(this._fish.indexOf(f), 1);
         const ms = this._mates[f.layer], mo = this._motion[f.layer];
@@ -273,11 +278,11 @@ export class School {
 
     tick(dt, t) {
         const W = this._ctx.world, P = W.pointer, c = this._c, b = this._b, env = this._env, tank = this._tank;
-        const night = !(W.lightsOn ?? true);
+        const night = !W.lightsOn;
         c.p = P.over ? P : null;
         c.night = night;
-        c.act = env.act ?? 1;
-        c.curiosity = env.curiosity !== false;
+        c.act = env.act;
+        c.curiosity = env.curiosity;
         c.spots = c.curiosity ? tank.spots ?? null : null;
         c.drowsy = drowsy(night, W.idle);
         c.lazy = lazy(night, W.idle) * c.act;
@@ -290,7 +295,7 @@ export class School {
         c.attn = (this._attnT -= dt) > 0 ? this._attn : null;
         this._threatsFrom(W.windows);
         c.food = tank.food?.any ? tank.food.pieces : null;
-        c.torch = night && !!c.p && this._ctx.settings?.flashlight !== false;
+        c.torch = night && !!c.p && this._ctx.settings.flashlight;
         const F = tank.flow?.on ? tank.flow : null;
         if (W.gap) for (const f of this._fish) coast(f.s, W.gap, b);  // unseen a while: they swam on meanwhile
         // brains think at 10 Hz, a third of the fish each tick; bodies move every tick
@@ -334,7 +339,7 @@ export class School {
     _save() {
         // Every monitor's school shares one store copy and the same fish ids: keep the larger fed count.
         const all = this._ctx.store.get(), prev = obj(all.fish), now = Date.now(), out = {}, where = { ...this._spots };
-        for (const [id, r] of Object.entries(prev)) if (ID.test(id) && valid(r, now)) out[id] = { born: r.born, fed: Math.min(r.fed, 1e6) };
+        for (const [id, r] of Object.entries(prev)) if (ID.test(id) && valid(r, now)) out[id] = record(r, now);
         for (const f of this._fish) {
             this._store[f.id].fed = f.brain.fed;
             where[f.id] = here(f.s, this._b, now);
@@ -373,7 +378,7 @@ export class School {
         if (it.fin) r = sp.finRate ?? 0.3;
         r = Math.max(r, sp.rateMin ?? 0);
         const swing = Math.abs(gap) > 0.01;  // 0.05 left a small pop at the end of each turn
-        if (swing && CURL_ON) f.ph += Math.min(2 * dt, (CURL[(f.yawRate > 0) !== mirror ? 0 : 1] - f.ph + 1) % 1);
+        if (swing) f.ph += Math.min(2 * dt, (CURL[(f.yawRate > 0) !== mirror ? 0 : 1] - f.ph + 1) % 1);
         else if (pers.glide && s.gliding) f.ph += Math.min(r * dt, (0.5 - f.ph % 0.5) % 0.5);
         else f.ph += r * dt;
         // mirrored profile at p = profile at p + 0.5: no pop. Accepted: at the flip the pattern's two
@@ -425,13 +430,13 @@ export class School {
             f.nods = brain.nods; f.nod = 1;
             if (pers.bottom && f.layer) {  // nosing the sand kicks up a puff at the mouth
                 const nx = s.x + (mirror ? -1 : 1) * m.len * f.sc * 0.42, ny = s.y + m.len * f.sc * 0.12;
-                this._tank.puff?.(nx - 4, ny); this._tank.puff?.(nx + 4, ny + 2);
+                this._tank.puff(nx - 4, ny); this._tank.puff(nx + 4, ny + 2);
             }
         }
         f.nod = Math.max(0, f.nod - dt / 0.3);  // the nod dips and comes back up as one smooth bump (it used to snap down)
         // same angle for both facings (Clutter mirrors after it rotates); the bank flips with the mirror so a turn does not snap
         const ang = f.pitch + (mirror ? -f.bank : f.bank) + Math.sin(Math.PI * (1 - f.nod)) * NOD + 0.02 * Math.sin(t * 0.9 + f.ph0 + 1);
-        const rot = Math.round(ang * 229) / 4;  // 0.25 degree steps, set only on change
+        const rot = Math.round(ang * 720 / Math.PI) / 4;  // 0.25 degree steps, set only on change
         if (rot !== f.rot) box.set_rotation_angle(Clutter.RotateAxis.Z_AXIS, f.rot = rot);
         f.swell += ((it.flare ? 1.08 : 1) - f.swell) * Math.min(1, dt / 0.15);  // betta flare
         const sc = Math.round(f.sc * f.swell * 200) / 200;

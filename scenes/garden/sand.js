@@ -6,7 +6,7 @@ export const CELL = 2;
 export const Q = 2;               // saved points are rounded to this many px
 export const GAP = 8;             // px a stroke moves before it saves its next point
 export const MAX_POINTS = 2500;   // saved points per monitor
-export const MAX_MONS = 4;        // monitors that get a save slot (index 0-3)
+export const MAX_MONS = 4;        // monitors that get a save slot
 export const MAX_LEAVES = 12;
 export const STORE_LIMIT = 60000; // chars; the engine refuses a store over 64 KB
 const PITCH = 14, TOOTH = 4;      // px between rake teeth; px from a tooth's middle to its edge
@@ -15,7 +15,7 @@ const RINGS = [1, 0.7, 0.4];      // depth of the rings 14, 28, 42 px out from a
 const BAND = [7, 49];             // px from a window that its rings rewrite
 const TROUGH = -0.5;              // depth of the furrow a dragged window leaves
 const LINES = 0.35;               // depth of the background lines
-const LIGHT = 1.6, GAIN = 0.75;   // shading strength; how opaque a full highlight/shadow gets (tuning knobs)
+const LIGHT = 1.6, GAIN = 0.75;   // shading strength; how opaque a full highlight/shadow gets
 
 export const makeField = (w, h) => {
     const cw = Math.ceil(w / CELL), ch = Math.ceil(h / CELL);
@@ -277,22 +277,23 @@ export const writeSlot = (strokes, leaves, w, h, now) => ({saved: Math.round(now
     strokes: strokes.map(s => ({t: Math.max(0, Math.round(now - s.born)), d: encode(s.q)}))});
 
 // The whole store: v 1, slots for monitors 0-3 only, and under STORE_LIMIT (dropping the oldest stroke
-// of the fullest monitor until it fits). Returns a fresh object.
+// of the fullest monitor until it fits; a slot with no strokes left is dropped). Returns a fresh object.
 export function fit(data) {
     const mons = {};
     for (const [k, m] of Object.entries(data?.mons ?? {})) {
         if (/^[0-3]$/.test(k) && m && typeof m === 'object' && (m.strokes === undefined ||
             Array.isArray(m.strokes) && m.strokes.every(s => Array.isArray(s?.d))))
-            mons[k] = m;
+            mons[k] = {...m, leaves: Array.isArray(m.leaves) ? m.leaves.slice(-MAX_LEAVES) : []};
     }
     const smoothed = Number.isInteger(data?.smoothed) && data.smoothed >= 0 ? data.smoothed : 0;  // last Smooth press acted on
     const out = {v: 1, mons, smoothed};
     const pts = m => (m.strokes ?? []).reduce((n, s) => n + s.d.length, 0);
     while (JSON.stringify(out).length > STORE_LIMIT) {
-        const m = Object.values(mons).reduce((a, b) => pts(b) > pts(a) ? b : a);
-        if (!m.strokes?.length)
-            break;
-        m.strokes.shift();
+        const k = Object.keys(mons).reduce((a, b) => pts(mons[b]) > pts(mons[a]) ? b : a);
+        if (mons[k].strokes?.length)
+            mons[k].strokes.shift();
+        else
+            delete mons[k];  // oversized by junk the strokes don't account for
     }
     return out;
 }

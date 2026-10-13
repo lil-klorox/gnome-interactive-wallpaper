@@ -30,9 +30,9 @@ What `ctx` gives you:
 | `world.idle`, `hour`, `dark` | seconds since the last input, local hour 0–24, dark style on |
 | `world.lightsOn`, `warm` | whether the lights are on right now, and whether it's dawn/dusk (see Lights) |
 | `world.notifications` | a count that goes up by one per notification; compare it to last tick |
-| `world.ready` | turns true once your first pictures have loaded |
+| `world.ready` | turns true once your first pictures have loaded, or after 3 s (some may still be empty then) |
 | `world.gap` | on the first tick after a pause (window covering the screen, overview, freeze) the seconds it was away (over 1 s), else 0 |
-| `image(name, fallback)`, `sheet(name, fallback)` | art from `assets/` (see Art and Fallback art) |
+| `image(name, fallback)`, `sheet(name, fallback)` | art from `assets/`: the manifest entry plus `content`, an `St.ImageContent` that stays empty until decoded (see Art and Fallback art) |
 | `ref`, `images` | the screen height your art was drawn for, and the manifest entries |
 | `settings`, `onSettings(fn)` | your scene's settings and a way to hear when they change (see Settings) |
 | `store.get()`, `store.set(obj)` | a small JSON save file for this scene (up to 64 KB). It stays in memory while GNOME runs, so what you save in `destroy()` is there for the next `create`, even right after a lock and unlock |
@@ -46,17 +46,9 @@ The demo scene is the whole contract in about 40 lines: a dot that eases toward 
 each new notification, dims when its lights are off, and has a colour and size you can change in the
 settings window. Open `scenes/dot/scene.js` and `scenes/dot/settings.js` next to this page.
 
-1. **Build once.** `create` adds a plain dark backdrop and one round `St.Widget`, sized from `ctx.h`
-   and the `size` setting, to `ctx.root`, and keeps its state (`x, y, notes, pop`) in local
-   variables. No module-level state: the engine may build your scene again at any time.
-2. **Read `world` in `tick`.** When `pointer.over` is true the dot moves a time-based fraction of
-   the way there, `1 - Math.exp(-3 * dt)`, so its speed doesn't depend on the frame rate. It moves
-   with `set_translation`, which is cheap.
-3. **Turn counters into events.** It keeps the last `world.notifications`; when the number changes
-   it sets `pop = 1`, which then fades and drives `set_scale`.
-4. **Follow the lights and theme.** `world.lightsOn` and `dark` pick the opacity.
-5. **React to settings.** `ctx.onSettings(paint)` repaints the dot when you pick a new colour.
-6. **No `destroy`**: everything it made lives under `ctx.root`, which the engine destroys.
+Two things in it are easy to miss. Its state lives in local variables, never at module level,
+because the engine may build your scene again at any time. And it moves a time-based fraction of
+the way each tick, `1 - Math.exp(-3 * dt)`, so its speed doesn't depend on the frame rate.
 
 To register a scene, add one line to `SCENES` in `scenes/index.js` (the first entry is the default)
 and import its settings list at the top:
@@ -143,24 +135,26 @@ always on.
 
 ## Poster
 
-The lock screen, the overview and the workspace-switch animation can't show a live scene; they
-show GNOME's normal wallpaper. So a scene can ship a still picture of itself, `scenes/<id>/poster.jpg`
+The lock screen, the overview and the workspace-switch animation can't show a live scene; they show
+GNOME's normal wallpaper. So a scene can ship a still picture of itself, `scenes/<id>/poster.jpg`
 (plus an optional `poster-dark.jpg`, used while your scene's lights are off). While your scene runs,
 the engine makes the poster GNOME's wallpaper and swaps it when the lights switch, and when the live
-wallpaper is turned off it puts the user's own wallpaper back. The poster has no wildlife (see `still`),
-so when the live scene comes back the fish appear on top of the same scenery instead of jumping. The poster also shows for the moment while your pictures load, so add one only if
-your scene paints the whole screen (that's why the dot has a plain backdrop).
+wallpaper is turned off it puts the user's own wallpaper back. The poster has no wildlife (see
+`still`), so when the live scene comes back the fish appear on top of the same scenery instead of
+jumping. The poster also shows for the moment while your pictures load, so add one only if your
+scene paints the whole screen (that's why the dot has a plain backdrop).
 
 Make it with `SCENE=<id> tools/poster.sh`: it runs your scene in a hidden test shell at noon and at
 23:00 and saves both pictures (use `SIZE=WxH` for a smaller one; the dot's is 860x360, and your
-monitor's own size makes the overview line up exactly). Nothing goes
-in the registry; the engine just looks for the files.
+monitor's own size makes the overview line up exactly). Nothing goes in the registry; the engine
+just looks for the files.
 
 ## Fallback art
 
 `ctx.image(name, fallback)` and `ctx.sheet(name, fallback)` take an optional second name. If `name`
-is missing from the manifest (or its entry is broken), you get `fallback` instead and the log says so
-once. Together with a `choice` setting, that's how optional pieces work: offer `castle | temple`,
+is missing from the manifest (or its entry is broken), you get `fallback` instead and the log says
+so once. With no usable fallback either, `image()` throws, which stops the scene like any other
+error. Together with a `choice` setting, that's how optional pieces work: offer `castle | temple`,
 call `ctx.image(ctx.settings.castle, 'castle')`, and if the temple art isn't there the castle shows.
 Keep alternatives the same shape (same points, same frame layout) so the rest of your code doesn't
 care which one it got.
@@ -254,10 +248,9 @@ Put PNGs in `scenes/<id>/assets/` and describe them in `assets/manifest.json`:
 ```
 
 `w, h` are the on-screen size when the monitor is `ref` px tall (scale by `ctx.h / ctx.ref`), `px`
-is the PNG's real size, and any `[x, y]` key is a named point you can use. A sprite sheet adds
-`n` (frames) and `cols` (frames per row); `ctx.sheet(name).make()` gives an actor and
-`show(actor, i)` picks frame `i`. Pictures load in the background; the engine keeps your scene
-hidden (the poster shows) until the first ones are ready, so nothing pops in.
+is the PNG's real size, and any `[x, y]` key is a named point. A sprite sheet adds `n` and `cols`;
+`ctx.sheet(name).make()` gives an actor and `show(actor, i)` picks frame `i`. The full format is in
+[DESIGN.md](../DESIGN.md#manifest-scenesidassetsmanifestjson-the-art-contract).
 
 You can paint art by hand and write the entry yourself, or render it with Blender like fishtank
 does. Its helpers in `scenes/fishtank/blender/common.py` set up the camera and lights;

@@ -3,7 +3,6 @@
 # Scripts: blender -b --factory-startup -t 6 -P scenes/garden/blender/<script>.py   (SAMPLES env = samples)
 import math, os, sys
 import bpy
-import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, '..', '..', 'fishtank', 'blender'))
 import common  # noqa: E402
@@ -46,16 +45,3 @@ def foot(name, ent, x0, x1, y0, y1):
     ent['foot'] = [round(min(xs), 1), round(min(ys), 1), round(max(xs) - min(xs), 1), round(max(ys) - min(ys), 1)]
     manifest(name, ent)
     return ent
-
-
-def still(name, w, h, fn, ss=2):
-    """Numpy still: fn(x, y) -> (rgb, alpha), x/y in -1..1 on an ss-times supersampled grid."""
-    y, x = np.mgrid[0:h * ss, 0:w * ss].astype(np.float32)
-    x, y = (x + 0.5) / (w * ss) * 2 - 1, (y + 0.5) / (h * ss) * 2 - 1
-    rgb, a = fn(x, y)
-    px = np.zeros((h * ss, w * ss, 4), np.float32)
-    px[..., :3], px[..., 3] = np.asarray(rgb, np.float32) * a[..., None], a
-    px = px.reshape(h, ss, w, ss, 4).mean((1, 3))
-    px[..., :3] /= np.maximum(px[..., 3:], 1e-6)
-    save_png(np.clip(px, 0, 1), os.path.join(ASSETS, name + '.png'))
-    manifest(name, {'w': w, 'h': h})

@@ -1,19 +1,15 @@
-// Sand garden. Hold the left button on bare desktop and drag to rake the sand. Windows sit in it like
-// stones: rings get raked around a window once it settles, and dragging one leaves a furrow that fills
-// back in. Raked lines fade over hours. Notifications drop a leaf from the branch.
-// Strokes and resting leaves are saved per monitor number; after a monitor is plugged in or out a
-// number can point at another screen, and that garden then shows there (accepted).
+// Sand garden. Strokes and resting leaves are saved per monitor number; after a monitor is plugged in
+// or out a number can point at another screen, and that garden then shows there (accepted).
 import Clutter from 'gi://Clutter';
 import St from 'gi://St';
 import * as S from './sand.js';
 
-const SLOTS = [[0.12, 0.78], [0.6, 0.3], [0.78, 0.84], [0.2, 0.18], [0.5, 0.9]];  // stone spots (screen fractions)
+const SLOTS = [[0.12, 0.78], [0.6, 0.3], [0.78, 0.84], [0.2, 0.18], [0.5, 0.9]];  // screen fractions
 const LANTERN = [0.055, 0.5];
-const SAND = '#d6c7a6';                  // under the sand picture, and all there is without it
-const SETTLE_S = 300;                    // s between settling steps
-const SAVE_AFTER = 2, SAVE_GAP = 10;     // s after a stroke ends; s between saves
-const TROUGHS = 8, FILL = 0.93, FILL_STEPS = 40;  // furrows kept; filled by FILL once a second, FILL_STEPS times
-const TILES = 4, FIRST_TILES = 6;        // canvas tiles painted per tick (more while the saved garden appears)
+const SAND = '#d6c7a6';
+const SETTLE_S = 300, SAVE_AFTER = 2, SAVE_GAP = 10;
+const TROUGHS = 8, FILL = 0.93, FILL_STEPS = 40;  // released furrows scale by FILL once a second
+const TILES = 4, FIRST_TILES = 6;  // canvas tiles per tick
 const FALL_S = 1.5, SLIDE_S = 0.2, FADE_S = 1, POOL = 14, SWAY = 30;
 const LINEAR = Clutter.ScalingFilter.LINEAR;
 
@@ -24,9 +20,9 @@ export default function create(ctx) {
     const bb = S.box(), tb = S.box();
     let R = S.profile(set.teeth);
     const warned = new Set();
-    const art = name => {
-        if (img[name])
-            return ctx.image(name);
+    const art = (name, fallback, get = ctx.image) => {  // missing art -> null (ctx.image would throw)
+        if (img[name] || img[fallback])
+            return get(name, fallback);
         if (!warned.has(name))
             console.warn(`interactive-wallpaper: garden has no "${name}" picture, skipped`);
         warned.add(name);
@@ -48,12 +44,11 @@ export default function create(ctx) {
     const footRect = (e, x, y) => Array.isArray(e.foot) && e.foot.length === 4 && e.foot.every(Number.isFinite)
         ? {x: x + e.foot[0] * s, y: y + e.foot[1] * s, w: e.foot[2] * s, h: e.foot[3] * s} : null;
 
-    // Back to front: sand, grooves, border, stones/lantern/branch, leaves, tint, lantern glow.
     ctx.root.add_child(new St.Widget({width: w, height: h, style: `background-color: ${SAND};`}));
     const sand = art('sand');
     if (sand)
         actor(ctx.root, sand, 0, 0, {width: w, height: h, content_repeat: Clutter.ContentRepeat.BOTH});
-    const cv = ctx.canvas({w: F.cw, h: F.ch, tile: 128, px: S.CELL})  // small tiles: a stroke repaints less;
+    const cv = ctx.canvas({w: F.cw, h: F.ch, tile: 128, px: S.CELL});  // small tiles: a stroke repaints less
     ctx.root.add_child(cv.actor);
 
     const edge = set.border !== 'none' && art(`edge-${set.border}`), inset = edge ? edge.h * s + 12 : 20;
@@ -70,9 +65,9 @@ export default function create(ctx) {
         S.lines(F);
     S.grow(bb, 0, 0, F.cw, F.ch);
 
-    const props = layer(), placed = [], feet = [];  // stones and lantern, drawn top to bottom so lower ones overlap
+    const props = layer(), placed = [], feet = [];  // drawn top to bottom so lower ones overlap
     for (let i = 0; i < set.stones; i++) {
-        const name = img[`stone-${i + 1}`] ? `stone-${i + 1}` : 'stone-1', e = art(name);
+        const e = art(`stone-${i + 1}`, 'stone-1');
         if (e)
             placed.push({e, x: SLOTS[i][0] * w, y: SLOTS[i][1] * h, moss: art(`moss-${i % 3 + 1}`), side: i % 2 ? 1 : -1});
     }
@@ -81,30 +76,29 @@ export default function create(ctx) {
         placed.push({e: lantern, x: LANTERN[0] * w + lantern.w * s / 2, y: LANTERN[1] * h});
     let glow = null;
     for (const p of placed.sort((a, b) => a.y - b.y)) {
-        const [x, y] = at(p.e, p.x, p.y);
+        const [x, y] = at(p.e, p.x, p.y), r = footRect(p.e, x, y);
         if (p.moss)  // at the stone's foot, half behind it
-            actor(props, p.moss, ...at(p.moss, p.x + p.side * (p.e.foot?.[2] ?? p.e.w) * 0.32 * s, p.y + 6 * s));
+            actor(props, p.moss, ...at(p.moss, p.x + p.side * (r?.w ?? p.e.w * s) * 0.32, p.y + 6 * s));
         actor(props, p.e, x, y);
-        const r = footRect(p.e, x, y);
         if (r) {
             feet.push(r);
             S.ring(F, r, all, bb, true);
         }
         const g = p.e === lantern && Array.isArray(lantern.light) && art('glow');
         if (g) {
-            const gs = 3 * s;  // a wide, soft pool so the lantern itself stays readable
+            const gs = 3 * s;
             glow = {e: g, x: x + lantern.light[0] * s - g.w * gs / 2, y: y + lantern.light[1] * s - g.h * gs / 2, gs};
         }
     }
-    const branch = set.season !== 'none' && (img[`branch-${set.season}`] ? art(`branch-${set.season}`) : art('branch-autumn'));
+    const branch = set.season !== 'none' && art(`branch-${set.season}`, 'branch-autumn');
     if (branch)
         actor(props, branch, w - branch.w * s, 0);
 
     // Leaves: a pool of sprites. st: 0 unused, 1 falling, 2 resting, 3 sliding, 4 fading out.
-    const leafName = img[`leaf-${set.season}`] ? `leaf-${set.season}` : 'leaf-autumn';
-    const sheet = set.season !== 'none' && art(leafName) ? ctx.sheet(leafName) : null;
+    const sheet = set.season !== 'none' ? art(`leaf-${set.season}`, 'leaf-autumn', ctx.sheet) : null;
     const rest = sheet && Array.isArray(sheet.rest) && sheet.rest.every(i => Number.isInteger(i) && i >= 0 && i < sheet.n)
         ? sheet.rest : [0];
+    const tumble = Math.max(1, Math.min(...rest));  // fall frames come before the rest frames
     const anchor = sheet && Array.isArray(sheet.anchor) ? sheet.anchor : sheet ? [sheet.w / 2, sheet.h / 2] : null;
     const leaves = [];
     if (sheet) {
@@ -143,17 +137,17 @@ export default function create(ctx) {
     if ((saved.smoothed ?? 0) !== set.resetSand)  // Smooth was pressed while no garden was running
         ctx.store.set(S.fit({...saved, mons: {}, smoothed: set.resetSand}));
     const slot = idx < S.MAX_MONS ? S.readSlot(ctx.store.get().mons?.[idx]) : null;
-    const t0 = now(), hours = () => set.settle;
+    const t0 = now();
     if (slot) {
         const sx = w / slot.w, sy = h / slot.h, st = S.makeStroke();
         for (const k of slot.strokes) {
             const age = t0 - k.born;
-            if (hours() > 0 && age > hours() * 3600)
+            if (set.settle > 0 && age > set.settle * 3600)
                 continue;
             k.q = S.resample(k.q, sx, sy);
             st.on = false;
             for (let i = 0; i < k.q.length; i += 2)
-                S.rakeTo(F, R, st, k.q[i] * S.Q, k.q[i + 1] * S.Q, S.settleFactor(age, hours()), all, bb);
+                S.rakeTo(F, R, st, k.q[i] * S.Q, k.q[i + 1] * S.Q, S.settleFactor(age, set.settle), all, bb);
             strokes.push(k);
         }
     }
@@ -181,7 +175,7 @@ export default function create(ctx) {
     cv.dirty(bb.x0, bb.y0, bb.x1, bb.y1);  // stone rings and the replayed strokes
     let notes = world.notifications, wasDown = world.pointer.down, held = false, cur = null, lastSave = 0, saveAt = 0;
     let lastSettle = t0, n = 0, first = true;
-    const shown = world.ready;  // already on screen (a settings rebuild): paint it all in the first tick, no visible fill
+    const shown = world.ready;  // a settings rebuild: paint it all in the first tick
     const stroke = S.makeStroke(), stamped = new Map(), troughs = new Map();
     const save = () => {
         saveAt = 0;
@@ -193,6 +187,15 @@ export default function create(ctx) {
         ctx.store.set(S.fit({...data, smoothed: set.resetSand, mons: {...data.mons, [idx]: S.writeSlot(strokes, lv, w, h, lastSave)}}));
     };
     const later = t => (saveAt = Math.max(t + SAVE_AFTER, lastSave + SAVE_GAP));
+    const endStroke = t => {
+        stroke.on = false;
+        if (cur.q.length >= 4) {
+            strokes.push(cur);
+            S.cap(strokes);
+            later(t);
+        }
+        cur = null;
+    };
 
     const spawn = () => {
         const a = world.area.w > 0 ? world.area : {x: 0, y: 0, w, h};
@@ -232,7 +235,7 @@ export default function create(ctx) {
     };
 
     const same = (a, b) => a && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
-    const fill = (buf, x, y, tw, th) => S.shade(F, buf, x, y, tw, th);
+    const fill = S.shade.bind(null, F);
 
     ctx.onSettings(keys => {
         if (keys.includes('teeth'))
@@ -278,20 +281,14 @@ export default function create(ctx) {
                 S.rakeTo(F, R, stroke, p.x, p.y, 1, clip, bb);
                 if (was && sheet)
                     brush(p.x, p.y, Math.hypot(p.x - lx, p.y - ly));
-                const q = cur.q;  // a point every GAP px keeps the replay smooth and the save small
+                const q = cur.q;
                 if (q.length === 0 || Math.hypot(p.x - q[q.length - 2] * S.Q, p.y - q[q.length - 1] * S.Q) >= S.GAP)
                     q.push(Math.round(p.x / S.Q), Math.round(p.y / S.Q));
             } else if (stroke.on) {
-                stroke.on = false;
-                if (cur.q.length >= 4) {
-                    strokes.push(cur);
-                    S.cap(strokes);
-                    later(t);
-                }
-                cur = null;
+                endStroke(t);
             }
 
-            // Windows: a furrow while dragged, rings once settled (one window per tick keeps ticks short).
+            // Windows: a furrow while dragged, a ring once settled (one per tick keeps ticks short).
             let busy = false, ringed = false;
             for (const win of world.windows) {
                 if (win.moving) {
@@ -340,12 +337,12 @@ export default function create(ctx) {
                 S.grow(bb, tr.bb.x0, tr.bb.y0, tr.bb.x1, tr.bb.y1);
             }
 
-            // Settling, on the wall clock: everything a little flatter every few minutes.
+            // Settling runs on the wall clock.
             if (t - lastSettle >= SETTLE_S || t < lastSettle) {
-                if (hours() > 0 && t > lastSettle) {
-                    S.scale(F, 0, 0, F.cw, F.ch, S.settleFactor(t - lastSettle, hours()));
+                if (set.settle > 0 && t > lastSettle) {
+                    S.scale(F, 0, 0, F.cw, F.ch, S.settleFactor(t - lastSettle, set.settle));
                     S.grow(bb, 0, 0, F.cw, F.ch);
-                    const keep = strokes.filter(k => t - k.born <= hours() * 3600);
+                    const keep = strokes.filter(k => t - k.born <= set.settle * 3600);
                     if (keep.length !== strokes.length) {
                         strokes = keep;
                         later(t);
@@ -369,7 +366,7 @@ export default function create(ctx) {
                     const k = Math.min(1, l.t / FALL_S);
                     l.x = l.x0 + (l.x1 - l.x0) * k + Math.sin(k * 9 + l.ph) * SWAY * s * (1 - k);
                     l.y = l.y0 + (l.y1 - l.y0) * k;
-                    sheet.show(l.a, Math.floor(l.t * 12 + l.ph) % 16);
+                    sheet.show(l.a, Math.floor(l.t * 12 + l.ph) % tumble);
                     l.a.rotation_angle_z = l.r1 * k;
                     if (k === 1) {
                         land(l, l.x1, l.y1, rest[Math.floor(Math.random() * rest.length)]);
@@ -403,6 +400,8 @@ export default function create(ctx) {
             return busy || stroke.on || left > 0;
         },
         destroy() {
+            if (stroke.on)  // a settings rebuild mid-stroke keeps the stroke
+                endStroke(now());
             if (saveAt)
                 save();
         },

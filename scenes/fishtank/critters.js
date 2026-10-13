@@ -3,16 +3,16 @@
 // Each is {tick(dt, t)}; missing or misshapen art skips that critter (logged once). Positions are
 // screen px in the fish layers, ref px in the scaled mid/far layers.
 import { FAST, SEE } from './brain.js';
-import { heading, spacing } from '../../bend.js';
+import { heading, spacing, shear } from '../../bend.js';
+import { pt } from './steer.js';
 
 const TAU = Math.PI * 2;
 const WALL = 120;          // px from the side glass where a jelly starts turning back
 const SHELL = 3600;        // s a moulted shrimp shell takes to fade
 const FRY = 600;           // s the hatched fry swirl by their plant
-// Manifest points are untrusted: one bad point skips that sprite, not the rest of the scenery.
-export const pt = p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite);
-// Lights off: the engine's schedule, or the old fixed night hours on a host without it.
-export const night = W => W.lightsOn === undefined ? W.hour >= 21 || W.hour < 6 : !W.lightsOn;
+export const night = W => !W.lightsOn;
+// Food a critter holds, or null once eaten or reused for a newer piece (the pool recycles them).
+const held = o => o.food?.live && o.food.born === o.born ? o.food : null;
 const ease = (v, goal, dt, tau) => v + (goal - v) * (1 - Math.exp(-dt / tau));
 const deg = r => r * 180 / Math.PI;
 // Seeded random numbers (same seed, same sequence).
@@ -196,7 +196,7 @@ function jellies(c) {
             const segs = c.tank.chain(par, tents[j % tents.length], k, k);
             if (!segs) continue;
             for (const [i, a] of segs.entries()) (i + 1 < segs.length ? a.get_first_child() : a).set_opacity(op);  // texture actors only
-            // past the root, segments lean by tank.shear about their joint row (a rotation split wide strips there)
+            // past the root, segments lean by shear about their joint row (a rotation split wide strips there)
             const py = segs.map((a, i) => { if (!i) return 0; const y = a.pivot_point.y * a.height; a.set_pivot_point(0, 0); return y; });
             strips.push({ segs, py, a: new Float64Array(segs.length), dx: (j - 1.5) * 7, last: new Float64Array(segs.length).fill(NaN), sy: NaN, tx: NaN, ty: NaN });
         }
@@ -239,7 +239,7 @@ function jellies(c) {
                     for (let i = 0; i < S.segs.length; i++) {
                         const r = Math.round(((i ? 0 : 180) + deg(S.a[i] - (i ? S.a[i - 1] : 0))) * 10) / 10;
                         if (r === S.last[i]) continue;
-                        if (i) c.tank.shear(S.segs[i], S.last[i] = r, S.py[i]);
+                        if (i) shear(S.segs[i], S.last[i] = r, S.py[i]);
                         else root.set_rotation_angle(2, S.last[i] = r);  // the root flips under the bell: a turn, not a lean
                     }
                 }
@@ -382,13 +382,13 @@ function seahorses(c) {
             for (const H of all) {
                 const bob = 3 * H.k * Math.sin(t * 0.8 + H.i * 2);
                 if (H.st === 'snap') {  // a quick tilt at a passing piece of food, then back to resting
-                    if ((H.snap -= dt) <= 0) { c.tank.food.bite(H.food); H.food = null; H.st = 'rest'; }
+                    if ((H.snap -= dt) <= 0) { if (held(H)) c.tank.food.bite(H.food); H.food = null; H.st = 'rest'; }
                 } else if (H.st === 'rest') {
                     H.f = (H.f + dt * 3) % 12;
                     if ((H.scan -= dt) <= 0 && c.tank.food?.any) {
                         H.scan = 0.5;
                         for (const q of c.tank.food.pieces)
-                            if (q.live && q.layer && Math.hypot(q.x - H.x, q.y - H.y) < 60 * H.k) { H.food = q; H.st = 'snap'; H.snap = 0.2; H.mir = q.x >= H.x ? 1 : -1; break; }
+                            if (q.live && q.layer && Math.hypot(q.x - H.x, q.y - H.y) < 60 * H.k) { H.food = q; H.born = q.born; H.st = 'snap'; H.snap = 0.2; H.mir = q.x >= H.x ? 1 : -1; break; }
                     }
                     const scared = c.threat(H.x, H.y);
                     if (scared || (H.timer -= dt * act) <= 0) {
@@ -460,9 +460,9 @@ function shrimp(c) {
                 if ((R.scan -= dt) <= 0 && R.st !== 'escape' && R.st !== 'moult') {
                     R.scan = 0.5;
                     const p = settled(c, R.x, R.y0, 80);
-                    if (p && p !== R.food) { R.food = p; R.tx = p.x / c.s; R.ty = p.y / c.s; R.st = 'walk'; }
+                    if (p && p !== R.food) { R.food = p; R.born = p.born; R.tx = p.x / c.s; R.ty = p.y / c.s; R.st = 'walk'; }
                 }
-                if (R.food && !R.food.live) { R.food = null; R.ty = R.y0; }
+                if (R.food && !held(R)) { R.food = null; R.ty = R.y0; }
                 R.y = ease(R.y, R.ty, dt, 1.5);  // walks up or down the sand to its food
                 if (R.st === 'walk') {
                     const dx = R.tx - R.x, step = 8 * act * dt;
@@ -504,9 +504,9 @@ function hermit(c) {
             if ((R.scan -= dt) <= 0 && (R.st === 'walk' || R.st === 'stop')) {
                 R.scan = 0.5;
                 const p = settled(c, R.x, R.y, 30, x0, x1);
-                if (p) { R.food = p; R.st = 'walk'; R.timer = 60; }
+                if (p) { R.food = p; R.born = p.born; R.st = 'walk'; R.timer = 60; }
             }
-            if (R.food && !R.food.live) { R.food = null; if (R.st === 'eat') { R.st = 'stop'; R.timer = 3; } }
+            if (R.food && !held(R)) { R.food = null; if (R.st === 'eat') { R.st = 'stop'; R.timer = 3; } }
             if (R.st === 'walk') {
                 const tx = R.food ? R.food.x / c.s : null;
                 if (tx !== null) R.dir = tx >= R.x ? 1 : -1;

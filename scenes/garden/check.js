@@ -102,6 +102,7 @@ for (let i = 0; i < 5; i++)
     mons[i] = S.writeSlot(jumpy(), [], 3440, 1440, 10);
 const fitted = S.fit({mons, junk: 1});
 ok(Object.keys(fitted.mons).join() === '0,1,2,3' && JSON.stringify(fitted).length <= S.STORE_LIMIT, 'store fits 64 KB');
+ok(JSON.stringify(S.fit({mons: {0: {leaves: Array(30000).fill([1, 2, 3])}}})).length <= S.STORE_LIMIT, 'fit drops a slot oversized by leaves');
 
 // Resample: a stroke saved on a 1000x500 screen replays at the same spot on a 2000x1000 one.
 F = S.makeField(2000, 1000);

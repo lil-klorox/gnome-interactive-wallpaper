@@ -100,7 +100,7 @@ def glow():
         a = a * np.clip((1 - r) * 6, 0, 1)
         hot = np.exp(-(r / 0.2) ** 2)[..., None]  # whiter at the flame
         return (1 - hot) * np.array([1.0, 0.745, 0.43]) + hot * np.array([1.0, 0.88, 0.66]), a
-    still('glow', 256, 256, fn)
+    still('glow', 256, 256, fn, ss=2)
 
 
 if __name__ == '__main__':

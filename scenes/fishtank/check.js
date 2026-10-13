@@ -1,7 +1,7 @@
 // Self-check for brain.js + steer.js, food.js and critters.js: `gjs -m check.js` or `node check.js`.
 import { Food, POOL, hand, gesture, HOLD_S, POUR_S } from './food.js';
 import { Critters, plan, readTank, dayOf, EVENTS, LOG } from './critters.js';
-import { makeBrain, think, PERSONALITY, NEAR, FAST, SEE, drowsy, lazy } from './brain.js';
+import { makeBrain, think, PERSONALITY, NEAR, FAST, drowsy, lazy } from './brain.js';
 import { makeFish, step, drift, FLOW } from './steer.js';
 
 let seed = 1;
@@ -89,8 +89,6 @@ ok(o.b.state === 'flee', 'moving window scares');
 for (let i = 0; i < 60; i++) run(o, null, [o], { threats: [win] });
 ok(dist(o.f, { x: 800, y: 450 }) > 150, 'flees the window');
 
-// feeding is checked in fish-check.js (claims, bites, bottom feeders) against food.js's piece shape
-
 // tameness: 100 flakes eaten halves the chance a slow cursor spooks a fish
 const fleeRate = fed => {
     let n = 0;
@@ -147,7 +145,7 @@ console.log('brain + steer ok');
 const stub = o => new Proxy(o, { get: (t, k) => k in t ? t[k] : () => {} });
 const actor = () => {
     const a = { visible: true, _c: stub({}), parent: null, add_child(k) { k.parent = a; }, remove_child(k) { k.parent = null; },
-        get_parent() { return a.parent; }, get_first_child() { return a._c; } };
+        get_parent() { return a.parent; }, get_first_child() { return a._c; }, get_transform: () => stub({}) };
     return stub(a);
 };
 const img = (w, h, extra = {}) => ({ w, h, n: 1, cols: 1, ...extra });
@@ -171,12 +169,10 @@ const tankOf = () => {
     return { swimBounds: b, ground: (l, x, z) => l ? 774 + z * 72 : 700 + 10 * Math.sin(x / 100) + z * 20,
         tops: [{ x0: 1100, x1: 1200, y: 600 }], fishLayers: [actor(), actor()], mid: actor(), far: [actor(), actor(), actor()],
         spots: [], perches: [{ x: 300, y: 700 }, { x: 900, y: 690 }], plants: [{ x: 300, y: 780, h: 200 }], chain: () => [actor(), actor()],
-        ship: { hole: { x: 700, y: 760 }, actor: actor() }, group: actor, shear() {} };
+        ship: { hole: { x: 700, y: 760 }, actor: actor() }, group: actor, puff() {} };
 };
 const ON = { jelly: true, gardenEels: true, moray: true, seahorse: true, shrimp: true, hermit: true, visitors: true };
 
-// food: a pinch sinks in its own layer, rocks, lands at its own depth in that layer's sand band (no
-// ruler-straight line of leftovers), sinks in a touch, then fades away
 let tk = tankOf(), food = tk.food = new Food(ctxOf(IMAGES), tk, rand);
 food.drop(800, 100, 9);
 ok(food.pieces.filter(q => q.live).length === 9, 'drop makes n pieces');
@@ -202,13 +198,16 @@ food.drop(1150, 400, 1);
 const pr = food.pieces.find(q => q.live && q.born === 15);
 pr.x = 1150; pr.layer = 1; pr.kind = 3;
 let perched = false;
-for (let i = 0; i < 30 * 40; i++) { food.tick(dt); perched ||= pr.perch > 0 && pr.y === 600; }
-ok(perched && pr.settled && pr.y > 770, 'food rests on a rock top, then slides off onto the sand');
+for (let i = 0; i < 30 * 40; i++) {
+    food.tick(dt);
+    if (!perched && pr.perch > 0 && pr.y === 600) { perched = true; food.skip(60); }  // unseen while on the rock
+}
+ok(perched && pr.live && pr.settled && pr.y > 770, 'food rests on a rock top, then slides off onto the sand');
 for (let i = 0; i < 30 * 100; i++) food.tick(dt);
 food.drop(800, 700, 1);
 for (let i = 0; i < 30 * 10; i++) food.tick(dt);
 const p0 = food.pieces.find(q => q.live);
-ok(food.bite(p0) && food.bite(food.pieces.indexOf(p0)) && p0.live && food.bite(p0) && !p0.live && !food.bite(p0), 'third bite finishes a piece, a dead one cannot be bitten');
+ok(food.bite(p0) && food.bite(p0) && p0.live && food.bite(p0) && !p0.live && !food.bite(p0), 'third bite finishes a piece, a dead one cannot be bitten');
 for (let i = 0; i < 30 * 46; i++) food.tick(dt);
 ok(!food.any && food.pieces.every(q => !q.live), 'settled food fades away');
 food.drop(800, 760, POOL);
@@ -222,7 +221,6 @@ food.drop(800, 760, 3);
 for (let i = 0; i < 30 * 90; i++) food.tick(dt);
 ok(!food.any, 'food without art still runs');
 
-// critters: all present, jellies stay in the top part, the moray goes out and comes home, eels hide
 tk = tankOf();
 tk.food = new Food(ctxOf(IMAGES), tk, rand);
 let cr = new Critters(ctxOf(IMAGES), tk, ON, { act: 1 }, rand);

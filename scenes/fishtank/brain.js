@@ -105,7 +105,8 @@ export function release(b) {
     b.food = null;
 }
 
-const tame = b => Math.min(2, 1 + b.fed / 50);
+const TAME_AT = 50;  // flakes eaten until a fish is fully tame
+const tame = b => Math.min(2, 1 + b.fed / TAME_AT);
 export const PET = 30;  // flakes eaten before a fish can become the tame favourite
 // Index of the favourite in a list of fed counts: the most fed, once it has eaten PET; else -1.
 export function petOf(fed) {
@@ -347,9 +348,7 @@ export const STATES = {
                 it.shoal = 0;
                 return it;
             }
-            // bug fix: fish aimed their middle at the flake (ate with it in the belly) and trailed a sinking
-            // one forever. Now the body stops beside it with the mouth on the flake, aiming 0.7 s ahead of its
-            // fall; clamped to where steer lets the fish's centre go, so food by the glass or the sand stays in reach.
+            // mouth, not centre, must reach the flake: aim 0.7 s ahead of its fall, clamped to where steer lets the centre go
             // ponytail: mouth = 0.8 pad ahead of the centre; read a mouth point from the manifest if fish look off
             const side = f.x <= k.x ? 1 : -1, mo = 0.8 * f.pad, at = b.pt;
             at.x = Math.max(w.x + f.pad, Math.min(w.x + w.w - f.pad, k.x - side * mo));
@@ -359,10 +358,10 @@ export const STATES = {
             it.shoal = 0;
             if (b.eat > 0) { b.eat -= c.dt; it.chomp = true; return it; }
             if (mx * mx + my * my < (10 + 0.2 * f.pad) ** 2) {
-                if (c.rand() < (b.fed >= 50 ? 0.1 : 0.2)) {  // missed: knocks it, overshoots, comes round again
-                    c.feeder?.kick(k, Math.cos(f.dir) * 12);
+                if (c.rand() < (b.fed >= TAME_AT ? 0.1 : 0.2)) {  // missed: knocks it, overshoots, comes round again
+                    c.feeder.kick(k, Math.cos(f.dir) * 12);
                     b.over = 0.3;
-                } else if (c.feeder ? c.feeder.bite(k) : (k.live = false, true)) {
+                } else if (c.feeder.bite(k)) {
                     b.fed++;
                     b.nods++;
                     b.eat = 0.4;
@@ -373,7 +372,7 @@ export const STATES = {
                 it.chomp = true;
                 return it;
             }
-            const fast = (1.6 + 0.3 * Math.min(1, b.fed / 50)) * (b.pers.curious < 0.3 ? 0.8 : 1);
+            const fast = (1.6 + 0.3 * Math.min(1, b.fed / TAME_AT)) * (b.pers.curious < 0.3 ? 0.8 : 1);
             it.speed = d > 120 ? fast : Math.min(fast, 0.6 + d / 120);
             it.chomp = d < 40;
             if (d < 80) it.pitch = Math.max(-0.45, Math.min(0.45, Math.atan2(k.y - f.y, Math.abs(k.x - f.x) + 1)));

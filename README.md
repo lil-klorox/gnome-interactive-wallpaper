@@ -21,8 +21,9 @@ dragged windows and race for food when you click.
 
 ## Install it
 
-You need GNOME 45 or newer (Debian 13 and later, recent Ubuntu and Fedora all ship it). It's built
-and tested on Wayland; X11 should work but hasn't been tested much.
+You need GNOME 45 to 49 (Debian 13, recent Ubuntu and Fedora ship one of these). Newer GNOME
+versions are added once they've been tested. It's built and tested on Wayland; X11 should work but
+hasn't been tested much.
 
 The quickest way is to download `interactive-wallpaper@lil-klorox.shell-extension.zip` from the
 [latest release](https://github.com/lil-klorox/gnome-interactive-wallpaper/releases/latest) and run:
@@ -50,11 +51,10 @@ window shows the knobs for the scene you picked, like when the tank lights go of
 fish you want, or which critters live there. "Reset to defaults" puts them all back.
 
 While a scene runs, a still picture of it (its "poster") becomes your normal GNOME wallpaper, so the
-lock screen, the overview and switching workspaces show the same scene instead of a plain blue
-background. The poster shows the scenery without the fish, at day or at night to match the tank
-lights, so when you come back the fish simply appear in the same tank. Turning the live wallpaper off, or turning the extension off, puts your own wallpaper
-back. One catch: if GNOME switches the extension off by itself, for example after a crash, your old
-wallpaper isn't put back. Pick it again in Settings → Appearance.
+lock screen and the overview show the same scene, day or night to match its lights. Turning the live
+wallpaper or the extension off puts your own wallpaper back. One catch: if GNOME switches the
+extension off by itself, for example after a crash, your old wallpaper isn't put back. Pick it again
+in Settings → Appearance.
 
 If you installed the zip, remove it from the Extensions app; your own wallpaper comes back. If you
 built it from source, run `make uninstall` instead: it puts your own wallpaper back and also removes
@@ -74,9 +74,10 @@ out from under it. The lights follow a schedule you can set, a notification send
 bubbles, and fish you feed get braver over the following days and slowly grow.
 
 Hold the button down to pour food, and at night your cursor becomes a flashlight the small fish
-drift toward. The fish you feed most turns tame and comes to say hi, and once a day something small and rare might happen, like baby fish hatching. Jellyfish,
-eels, seahorses, shrimp and a hermit crab live in there too. All of its art was modeled and rendered
-ahead of time in Blender, so your computer only has to slide pictures around.
+drift toward. The fish you feed most turns tame and comes to say hi, and once a day something small
+and rare might happen, like baby fish hatching. Jellyfish, eels, seahorses, shrimp and a hermit crab
+live in there too. All of its art was modeled and rendered ahead of time in Blender, so your
+computer only has to slide pictures around.
 
 **Sand garden.** A calm zen garden seen from above. Drag with the mouse button held and you rake
 grooves into the sand, which slowly smooth back out over the hours. Raked rings sit around the
@@ -89,20 +90,11 @@ show how a scene is built.
 
 ## What the engine does
 
-Each wallpaper is a "scene" that plugs into the engine. Everything hard is done once by the engine,
-so no scene has to get it right on its own:
-
-- it shrinks art to fit your screen, and keeps shrinking until the whole scene fits a memory budget
-  of 100 MB
-- it loads pictures in the background, so the desktop never stutters while art loads, and keeps the
-  scene hidden behind its poster until the pictures are ready
-- it shares one copy of each picture across all your monitors
-- it draws 30 frames a second in step with your screen while you can see it, and nothing at all when
-  you can't: a window (or a few tiled side by side) fills the screen, the overview is open, the
-  screen is blank or locked. When it comes back, the scene can move things on by the time it was away
-- it runs a watchdog, which means a scene that throws an error gets stopped and one that keeps
-  running too slowly takes a short break, while the rest of your desktop carries on as normal. If a
-  scene keeps having problems it stays off until you turn the live wallpaper off and on
+Each wallpaper is a "scene" that plugs into the engine, which does the hard parts once. It keeps
+every scene under 100 MB of picture memory, loads art in the background, draws 30 frames a second
+only while you can see the wallpaper (nothing at all behind a full-screen window, in the overview or
+on a locked screen), and stops a scene that crashes or keeps running slowly while the rest of your
+desktop carries on. [DESIGN.md](DESIGN.md) has the details.
 
 A scene only ever sees where the mouse is, where windows are (never what's in them), how long you've
 been away, the time and whether dark style is on. It never sees window titles or what a notification
@@ -114,20 +106,16 @@ not something to hand to code you haven't read.
 
 ## Make your own scene
 
-A scene is one folder with one function in it. The engine calls it once to build your things, then
-about 30 times a second with a fresh summary of the desktop, and you move your things around. Your
-scene's settings are a short list the engine turns into rows in the settings window for you.
-[docs/writing-a-scene.md](docs/writing-a-scene.md) walks through the dot scene from start to finish
-and covers art, settings, the lights schedule, posters and the few rules the engine enforces.
-[DESIGN.md](DESIGN.md) explains how all the pieces fit together. If you make something you like,
-open a pull request and it can ship with the next version.
+A scene is one folder with one function the engine calls to build it, then about 30 times a second
+with a summary of the desktop. [docs/writing-a-scene.md](docs/writing-a-scene.md) walks through the
+dot scene and covers art, settings, lights and posters. If you make something you like, open a pull
+request and it can ship with the next version.
 
 ## Try it without touching your desktop
 
-`./dev.sh` opens a separate test copy of GNOME in a window, with the wallpaper already running, so
-you can play with it without changing anything on your real desktop. `./dev.sh --headless 40` runs
-that test copy invisibly for 40 seconds and saves a few screenshots plus a small file with the
-memory and speed numbers. `make check` runs the quick logic tests, which don't need GNOME at all.
+`./dev.sh` opens a separate test copy of GNOME in a window with the wallpaper running, and
+`./dev.sh --headless 40` runs it invisibly and saves screenshots plus memory and speed numbers.
+Neither touches your real desktop. More in [docs/writing-a-scene.md](docs/writing-a-scene.md#test-it).
 
 ## License
 

@@ -2,7 +2,7 @@
 # poses lying on the sand (manifest extra rest = [16..19]). Maple red (autumn), maple green (summer),
 # cherry petal (spring). Also holds the leaf/petal mesh + material that branch.py hangs on its twigs.
 # Usage: blender -b --factory-startup -t 6 -P scenes/garden/blender/leaves.py [-- autumn summer spring]
-import json, math, os, sys
+import math, os, sys
 import bpy
 import numpy as np
 from mathutils import Matrix, Vector
@@ -135,17 +135,6 @@ def leaf(kind, sd, size=0.26, mat=None, smat=None):
     o.location = (0, 0, 0)
     st.parent = o
     return o
-
-
-def hidpi(name):
-    """2x render kept as the texture; w/h and 2-number points halved."""
-    with open(os.path.join(ASSETS, 'manifest.json')) as f:
-        ent = json.load(f)['images'][name]
-    ent = {k: [round(v[0] / 2, 1), round(v[1] / 2, 1)] if isinstance(v, list) and len(v) == 2 and k != 'px' else v
-           for k, v in ent.items()}
-    ent.update(w=ent['w'] / 2, h=ent['h'] / 2)
-    manifest(name, ent)
-    print('hidpi', name, ent)
 
 
 def leaf_sheet(season):

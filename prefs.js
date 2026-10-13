@@ -4,31 +4,29 @@ import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk';
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 import {SCENES} from './scenes/index.js';
-import {resolve, encode, logLines} from './settings.js';
+import {resolve, encode, logLines, parseStore} from './settings.js';
 
 const KEY = 'scene-settings';
 
-// The scene's save file (written by the shell side, ctx.js store), read-only; missing or bad = null.
+// The scene's save file (ctx.js store), read-only; missing or bad = {}.
 function readStore(id) {
     try {
         const path = GLib.build_filenamev([GLib.get_user_data_dir(), 'interactive-wallpaper', `${id}.json`]);
-        const raw = Gio.File.new_for_path(path).load_contents(null)[1];
-        return raw.length <= 64 * 1024 ? JSON.parse(new TextDecoder().decode(raw)) : null;
+        return parseStore(Gio.File.new_for_path(path).load_contents(null)[1]);
     } catch {
-        return null;
+        return {};
     }
 }
 
-// '2026-10-11' -> 'Sunday 11 October' in the user's language; the raw day if it isn't a real date.
+// '2026-10-11' -> 'Sunday 11 October', localized; the raw day if invalid.
 function dayName(day) {
     const [y, m, d] = day.split('-').map(Number);
     return GLib.DateTime.new_local(y, m, d, 12, 0, 0)?.format('%A %-d %B') ?? day;
 }
 
-// One row per declared setting; edit() stores the new value. store() = the scene's save file (log rows).
 function row(d, v, edit, store) {
     switch (d.type) {
-    case 'log': {  // read-only lines the scene keeps in its store
+    case 'log': {
         const r = new Adw.ExpanderRow({title: d.label, expanded: true});
         const lines = logLines(d, store());
         for (const l of lines)
@@ -74,7 +72,7 @@ function row(d, v, edit, store) {
         m.connect('value-changed', set);
         return r;
     }
-    case 'action': {  // a button; each press stores the count + 1, which the scene sees as a change
+    case 'action': {  // each press stores count + 1
         const b = new Gtk.Button({label: d.button ?? d.label, valign: Gtk.Align.CENTER});
         const r = new Adw.ActionRow({title: d.label, activatable_widget: b});
         let n = v;
@@ -106,13 +104,14 @@ export default class Prefs extends ExtensionPreferences {
         top.add(scene);
         page.add(top);
 
-        // The chosen scene's own settings, one group per `group`, rebuilt when the scene changes.
+        // The scene's own rows, one box per `group`.
         let groups = [];
         const fill = () => {
             groups.forEach(g => page.remove(g));
             groups = [];
             const id = ids[scene.selected], decl = SCENES[id].settings ?? [];
-            const vals = resolve(decl, settings.get_string(KEY), id);
+            // Re-read on every write so another writer's keys are kept.
+            const now = () => resolve(decl, settings.get_string(KEY), id), vals = now();
             const add = title => {
                 const g = new Adw.PreferencesGroup({title});
                 page.add(g);
@@ -127,15 +126,17 @@ export default class Prefs extends ExtensionPreferences {
                 if (!byName.has(name))
                     byName.set(name, add(name));
                 byName.get(name).add(row(d, vals[d.key], val => {
-                    vals[d.key] = val;
-                    settings.set_string(KEY, encode(decl, settings.get_string(KEY), id, vals));
+                    const cur = now();
+                    cur[d.key] = val;
+                    settings.set_string(KEY, encode(decl, settings.get_string(KEY), id, cur));
                 }, getStore));
             }
             if (!decl.length)
                 return;
             const reset = new Adw.ActionRow({title: 'Reset to defaults', activatable: true});
-            reset.connect('activated', () => {  // press counts stay, so a reset doesn't also press every button
-                const counts = Object.fromEntries(decl.filter(d => d.type === 'action').map(d => [d.key, vals[d.key]]));
+            reset.connect('activated', () => {  // keeps press counts, so a reset presses no button
+                const cur = now();
+                const counts = Object.fromEntries(decl.filter(d => d.type === 'action').map(d => [d.key, cur[d.key]]));
                 settings.set_string(KEY, encode(decl, settings.get_string(KEY), id, counts));
                 fill();
             });
@@ -146,7 +147,7 @@ export default class Prefs extends ExtensionPreferences {
             settings.set_string('scene', ids[scene.selected]);
             fill();
         });
-        const id = settings.connect('changed::scene', pick);  // the Quick Settings menu can change it too
+        const id = settings.connect('changed::scene', pick);  // Quick Settings can change it too
         window.connect('close-request', () => settings.disconnect(id));
         window.add(page);
         window._settings = settings;  // keep alive with the window

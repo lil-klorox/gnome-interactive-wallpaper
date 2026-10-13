@@ -32,10 +32,10 @@ No subprocess, no WebKit, no video, no IPC, no deps.
 metadata.json        uuid interactive-wallpaper@lil-klorox, settings-schema
 extension.js         lifecycle, mount per monitor, frame clock, pause, watchdog, world fill, poster, Quick Settings tile
 shell.js             the ONLY private-API file (bg managers, background group, startup), each with a why-comment
-world.js             pure: makeWorld(), update(world, raw, dt), covers(rects, area)
+world.js             pure: makeWorld(), update(world, raw, dt), covers(rects, area), changed(raw, last)
 render.js            pure: parseManifest, scaleFor, bytesOf, frameOffset, BUDGET
 bend.js              pure: bendy many-sprite bodies (spacing, heading, shear, spring), see docs/writing-a-scene.md
-settings.js          pure: resolve/encode (scene settings), lightsAt, posterPlan
+settings.js          pure: resolve/encode (scene settings), lightsAt, posterPlan, parseStore
 ctx.js               image(), sheet(), store, settings — the only St.ImageContent code
 prefs.js             settings window: on/off, scene, then the scene's own rows built from its list
 schemas/             keys scene, live, frozen, scene-settings, saved-background
@@ -45,54 +45,20 @@ scenes/garden/       scene.js, sand.js (pure sand math), settings.js, check.js, 
 scenes/dot/          the minimal example scene (see docs/writing-a-scene.md)
 scenes/fishtank/     scene.js, tank.js, fish.js, brain.js, steer.js, food.js, critters.js, settings.js, assets/, blender/
 dev.sh, tools/probe/ nested / headless test shell; tools/poster.sh makes a scene's poster
+tools/restore-wallpaper.js  `make uninstall` puts the saved wallpaper back
+tools/parse-check.js `make pack`: staged files parse and their relative imports are packed
 tools/*.desktop      app-search entry that opens the settings window (installed by make install)
 Makefile             check | pack | install | uninstall
 ```
 
-## Contract (scenes code against this only)
+## Contract
 
-```js
-// scenes/<id>/scene.js
-export default function create(ctx) { return {tick(dt, t) {}, destroy() {}}; }
+The scene-facing contract (`create(ctx)` and every `ctx` and `world` field) is written once, in
+[docs/writing-a-scene.md](docs/writing-a-scene.md#the-contract). Host-side facts it leaves out:
 
-ctx = {                     // one per monitor, frozen
-  root,                     // Clutter.Actor w×h, non-reactive, inside the monitor's background actor
-  w, h,                     // px
-  ref,                      // manifest.ref: screen height the art was drawn for
-  images,                   // manifest map (frozen); check before use, missing art is not fatal
-  world,                    // snapshot below; same object every tick, host mutates in place
-  image(name, fallback?),   // → {...entry, content: St.ImageContent}; content is empty until decoded;
-                            //   name missing/invalid in the manifest → fallback's entry (logged once)
-  sheet(name, fallback?),   // → {...entry, make() → clip actor w×h with the sheet as child, show(actor, i)}
-  store: {get() /* {} on missing/bad */, set(obj) /* async, whole-file JSON ≤ 64 KB, else log + skip */},
-  settings,                 // {key: value} for every declared setting, always valid; updated in place
-  onSettings(fn),           // fn(changedKeys) after a live change; one per scene, dropped on destroy
-  monitor,                  // {index, count, primary}, frozen
-  canvas({w, h, tile = 256, px = 1}),  // → {actor, cols, rows, tile, dirty(x0, y0, x1, y1), flush(fill, max)}:
-                            //   St.ImageContent tiles painted from one reused Uint8Array (premultiplied RGBA),
-                            //   only dirty tiles refilled + uploaded; bytes count toward BUDGET, over → throws
-};
-tick(dt, t) → false        // "nothing moves": ticked at ~5 Hz (dt ≤ 0.3 s) until world.changed() sees input
-
-world = {                   // all coords monitor-local
-  pointer: {x, y, speed, over, down},  // over = bare desktop; down = button 1 held
-  windows: [{x, y, w, h, moving, id, vx, vy, age}], // visible on this monitor + active workspace, geometry only;
-                                       // id stable per window; vx/vy px/s smoothed; age s (3600 if open at build)
-  area: {x, y, w, h},                  // work area (no panels/docks), last known while paused
-  idle,                                // seconds since last input
-  hour,                                // 0..24 local
-  dark,                                // color-scheme === 'prefer-dark'
-  notifications,                       // monotonic count this session
-  lightsOn, warm,                      // lights schedule; warm = within 45 min of an automatic switch
-  ready,                               // true once this monitor's first textures decoded (or after 3 s)
-  gap,                                 // s since this monitor's last tick if over 1 s (paused, frozen,
-                                       // resting), else 0; the scene may move things on (cap it, e.g. 20 s)
-};
-
-ext.stats = {bytes, k, actors, tickMs /* EMA */, ticks /* monotonic */}  // Looking Glass + review
-```
-
-Store lives at `get_user_data_dir()/interactive-wallpaper/<id>.json`.
+- `ctx` and `ctx.monitor` are frozen; `world` and `settings` are the same objects every tick, updated in place.
+- The store lives at `get_user_data_dir()/interactive-wallpaper/<id>.json`.
+- `ext.stats = {bytes, k, actors, tickMs /* EMA */, ticks}` for Looking Glass and review.
 
 ## Settings
 
@@ -140,8 +106,8 @@ live scene then adds the fish on top instead of moving them, and the light match
   poster stays until the user picks a wallpaper or the extension starts again. Accepted: no hook runs
   on those paths.
 - The next start fixes a leftover: with `live` off, login and enable run the turn-off logic (a poster
-  path that no longer exists still counts as ours). `make uninstall` puts the saved wallpaper back before
-  removing the extension (`tools/restore-wallpaper.js`), because nothing of ours runs after that.
+  path that no longer exists still counts as ours). `make uninstall` disables the extension first (its
+  `disable()` restores the wallpaper), then runs `tools/restore-wallpaper.js` as a net, then removes it.
 - Follows the lights: when `lights.on` flips, the other poster is set. The shell then puts a new bg
   actor under the old one and fades the old one out over 1 s; the host moves the live scene into the
   new actor and leaves a `Clutter.Clone` of it in the old one, so nothing visible changes and the scene
@@ -168,7 +134,8 @@ live scene then adds the fish on top instead of moving them, and the light match
   3440×1440), so budget math uses `px`, never `w·h`.
 - Any `[x, y, ...]` key is a point in frame px (`base`, `j1..`, `outlet`, `mouth`, ...). Fish
   `eyes[i]` = list of `[x, y, r, squash]` for frame `i`, same row-major order.
-- `parseManifest` is the trust boundary: an entry with bad `w/h/n/cols` is dropped and logged once.
+- `parseManifest` is the trust boundary: an entry with bad `w/h/n/cols` is dropped and logged once;
+  a list key holding anything but numbers is dropped from its entry.
 - Written only by the Blender helper `common.manifest()`; runtime never writes it.
 
 ## Render layer
@@ -232,35 +199,10 @@ live scene then adds the fish on top instead of moving them, and the light match
   the probe calls `System.gc()` before each reading. Each unlock re-decodes the textures (e.g.o forbids
   keeping them across disable), which is why the texture budget stays tight.
 
-## Fishtank scene
+## Scenes
 
-`scene.js` wires `Tank(ctx)` (scenery, bubbler, lid, snail, plants) and `School(ctx, layers,
-bounds)`. Back to front: water + rays/caustics, far plates, far fish layer, decor (castle, ship,
-chest, diver), bubbler + bubbles, sand/rocks/snail, near fish layer, foreground plants. Plant sway
-segments are clip boxes over one texture.
-
-Fish = brain / motor / body, so each can change alone:
-- `brain.js` — the thinking: a per-fish state machine (wander, curious, flee, rest, feed, ...), each
-  state returns an intent `{target|away, speed, look}`. Personality is plain per-species data.
-  A new behaviour = one state + one transition.
-- `steer.js` — the motion: intent → movement (wander, bounds, separation, schooling, turn limits).
-- `fish.js` — the body: sheet frame from yaw and tail phase, pupil overlay looking at `look`, puff.
-
-World reactions: moving/new windows are threats → `flee`; idle > 600 s → rest more, light dims;
-lights off on the engine's schedule (`world.lightsOn`) with warm dawn/dusk (`world.warm`); dark mode cools the light;
-a notification → bubble burst and fish glance top-centre; click on bare desktop → flakes sink,
-fish `feed`. Store `{fish: {id: {born, fed}}}`: fish grow over 14 days, fed fish get bolder.
-
-## Art pipeline (Blender, offline)
-
-Headless bpy scripts in `scenes/fishtank/blender/` are the source of truth; runtime never needs
-Blender. `blender -b --factory-startup -P scenes/fishtank/blender/<script>.py`.
-- `common.py`: Cycles, ortho camera, shared underwater light rig and PBR helpers, `sprite()` (render
-  + crop + points), `manifest()` (flock'd write of one entry, adds `px`).
-- `scene_*.py`: one prop each. `fish.py [species ...]`: swim frames × yaws (profile → front; the
-  runtime mirrors the other half), per-frame eye points, puffer inflation sheet.
-- Look: fully lit, solid, a little dorky but detailed (wear, moss, grime, translucent fins); no
-  plastic CG. Light, density (`PPU` at `ref`) and haze are shared so scenery and fish match.
+Scene internals live with the scene: `scenes/fishtank/scene.js` (layers, brain/motor/body split,
+world reactions) and `scenes/fishtank/blender/common.py` (the Blender art pipeline).
 
 ## Not building
 

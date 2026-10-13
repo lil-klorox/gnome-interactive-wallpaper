@@ -1,24 +1,14 @@
 # Tank extras: vignette (512 px glass-edge darkening) and torch (400 px night light pool) as numpy
 # stills; moulted shrimp shell, snail egg clutch and fish eggs on a leaf (Cycles, kept at 2x, sized at half).
 # Usage: blender -b --factory-startup -P blender/scene_extras.py [-- name ...]   (SAMPLES env = samples)
-import json, math, os, sys
+import math, os, sys
 import bpy
 import numpy as np
 sys.path.insert(0, os.path.dirname(__file__))
 from common import *
-from scene_bits import rig, still
+from scene_bits import rig
 from scene_eels import tube, skin_coords
 from scene_shrimp import spine, radius, tailfan
-
-
-def hidpi(name):
-    """Keep the 2x render as the texture (crisp on big screens) but size it at half: w/h/points / 2."""
-    with open(os.path.join(ASSETS, 'manifest.json')) as f:
-        ent = json.load(f)['images'][name]
-    ent = {k: [round(v[0] / 2, 1), round(v[1] / 2, 1)] if isinstance(v, list) and k != 'px' else v for k, v in ent.items()}
-    ent.update(w=ent['w'] / 2, h=ent['h'] / 2)
-    manifest(name, ent)
-    print('hidpi', name, ent)
 
 
 def smooth(x):

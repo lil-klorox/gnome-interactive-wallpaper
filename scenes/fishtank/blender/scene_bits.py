@@ -43,19 +43,6 @@ def half(name):
     print('half', name, ent)
 
 
-def still(name, w, h, fn, ss=4):
-    """Numpy still: fn(x, y) -> (rgb, alpha) on a ss-times supersampled grid, x/y in -1..1."""
-    y, x = np.mgrid[0:h * ss, 0:w * ss].astype(np.float32)
-    x, y = (x + 0.5) / (w * ss) * 2 - 1, (y + 0.5) / (h * ss) * 2 - 1
-    rgb, a = fn(x, y)
-    px = np.zeros((h * ss, w * ss, 4), np.float32)
-    px[..., :3], px[..., 3] = np.asarray(rgb, np.float32) * a[..., None], a
-    px = px.reshape(h, ss, w, ss, 4).mean((1, 3))
-    px[..., :3] /= np.maximum(px[..., 3:], 1e-6)
-    save_png(np.clip(px, 0, 1), os.path.join(ASSETS, name + '.png'))
-    manifest(name, {'w': w, 'h': h})
-
-
 def flake_mesh(sd, mat):
     """Thin torn flake: irregular rim with a few bites out of it, a crinkle, uv.x = 0 centre .. 1 rim."""
     rng = np.random.default_rng(sd)

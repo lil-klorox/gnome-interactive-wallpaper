@@ -1,15 +1,11 @@
-// Tank scenery: Blender-rendered sprites from assets/ (made by blender/scene_*.py), composed into
-// parallax layers. Art is uploaded once; motion only moves, rotates or swaps the content of actors.
-// Also the tank's ambient life (bubbles, motes, plants that bend when brushed) and the world the
-// fish read (fishLayers, swimBounds, sandY, perches, plants, spots, ship, food).
+// Tank scenery in parallax layers, its ambient life, and the world the fish read. Art is uploaded
+// once; motion only moves, rotates or swaps the content of actors.
 import Clutter from 'gi://Clutter';
 import St from 'gi://St';
 import { Food } from './food.js';
-import { Critters, night, pt, rng } from './critters.js';
-import { drift } from './steer.js';
-import { shear, spring } from '../../bend.js';
-
-export { pt };  // fish.js reads manifest points through it
+import { Critters, night, rng } from './critters.js';
+import { drift, pt } from './steer.js';
+import { shear, spring, clamp } from '../../bend.js';
 
 const TAU = Math.PI * 2;
 const SAND = 1150;       // ref row of the sand's back edge
@@ -22,8 +18,7 @@ const PLANT_FLOW = 0.1;  // how much a dragged window's current bends plants (ca
 const TORCH = 150;       // night flashlight opacity
 const EGGS = 86400;      // s snail eggs on the glass take to fade
 
-// Props on the sand, by screen x fraction and the ref row their base sits on (sorted by row at build).
-// slot: the setting that can swap the piece; big: hidden by decor 'minimal'.
+// Props on the sand: [name, x fraction, base ref row, scale]; the setting named like the prop swaps the piece.
 const PROPS = [
     ['rock_b', 0.30, 1205, 0.9], ['castle', 0.12, 1222, 1], ['rock_c', 0.235, 1250, 0.8], ['ship', 0.43, 1215, 1],
     ['rock_a', 0.53, 1262, 0.9], ['chest', 0.6, 1290, 1], ['bubbler', 0.71, 1268, 1], ['diver', 0.86, 1255, 1],
@@ -128,14 +123,10 @@ export class Tank {
         if (p) { p.t = 0.6; p.x = x; p.y = y; }
     }
 
-    // Food art lands on the sand here (px): near layer just below the swim box, far layer higher up.
-    // Without x: one row per layer (the old flat line). With x: the top of that layer's sand band there.
-    sandY(layer, x) {
-        if (x === undefined) {
-            const b = this.swimBounds;
-            return b.y + b.h + (layer ? 6 : -24);
-        }
-        return this.ground(layer, x, 0);
+    // Sand row (px) a layer's fish shadows fall on.
+    sandY(layer) {
+        const b = this.swimBounds;
+        return b.y + b.h + (layer ? 6 : -24);
     }
 
     // Where food at depth z (0 = back of the band, 1 = front) lies on the floor at screen x. Near band:
@@ -208,7 +199,7 @@ export class Tank {
         for (const [n, k, o] of [['far0', 0.2, 20], ['far1', 0.35, 25], ['far2', 0.5, 30]]) {
             const m = this._m[n], l = layer(k);
             this.far.push(l);
-            if (m) this._tile(l, n, -DRIFT, m.yb - m.h, W + 2 * DRIFT, 0);
+            if (Number.isFinite(m?.yb)) this._tile(l, n, -DRIFT, m.yb - m.h, W + 2 * DRIFT, 0);
             haze(o);
         }
         const floor = layer(0.75);
@@ -326,18 +317,18 @@ export class Tank {
         const x0 = vx ? 0 : x, y0 = vx ? 0 : y, n = Math.ceil((width + (vx ? m.w : 0)) / m.w);
         for (let i = 0; i < n; i++)
             this._actor(a, img, { x: x0 + i * m.w, y: y0, width: m.w, height: m.h });
-        let last = NaN;  // quarter-pixel steps, set only on change
-        if (vx) this._anims.push(t => {
-            const x = -Math.round((((t * vx) % m.w + m.w) % m.w) * 4) / 4;
-            if (x !== last) a.set_translation(last = x, 0, 0);
-        });
+        if (vx) {
+            let last = NaN;  // quarter-pixel steps, set only on change
+            this._anims.push(t => {
+                const x = -Math.round((((t * vx) % m.w + m.w) % m.w) * 4) / 4;
+                if (x !== last) a.set_translation(last = x, 0, 0);
+            });
+        }
         return a;
     }
 
-    // Sprite cut into segments at its joints (j1, j2, ...), each rotating about the one below; the
-    // base sits at (0, 0) of parent, scaled (sx, sy). Returns the segment actors, root first, or null.
-    // Segment = pivot actor + the whole image clipped to its band, the next segment hanging off the
-    // pivot (a clip cuts children too). The top segment has no children: one clipped image actor.
+    // Sprite cut into segments at its joints (j1, j2, ...), each rotating about the one below; base at
+    // (0, 0) of parent. Each segment clips its own image, not the next one (a clip cuts children too).
     chain(parent, name, sx = 1, sy = 1) {
         const m = this._m[name], img = pt(m?.base) && this._img(name);
         if (!img) return null;
@@ -374,8 +365,6 @@ export class Tank {
         return a;
     }
 
-    shear(a, deg, py) { shear(a, deg, py); }  // critters reach it through the tank (stubbed in check.js)
-
     // Plant at ref (x, y) in a layer, swaying out of step with its neighbours. Returns the brush
     // record {x, y, h (screen px), bend, bv}: fish push bv, tick() springs bend back.
     _plant(parent, x, y, k, amp, species = null) {
@@ -395,7 +384,7 @@ export class Tank {
             for (let i = 0; i < n; i++) {
                 const v = Math.round(((i ? 0 : lean) + amp * (0.6 + 0.3 * i) * Math.sin(t * sp + ph - i * 0.6) +
                     p.bend * BEND_DEG / n * Math.sign(mir)) * 10) / 10;
-                if (v !== last[i]) this.shear(segs[i], last[i] = v, py[i]);
+                if (v !== last[i]) shear(segs[i], last[i] = v, py[i]);
             }
         };
         this._slow.push(p.sway);
@@ -462,8 +451,9 @@ export class Tank {
         const chest = at.chest?.[0];
         const lid = chest && [...Array(10).keys()].map(i => this._img(`chest_lid_${i}`));
         let lidA = null;
-        if (lid?.every(Boolean)) {  // lid frames are cropped on their own: ox/oy place them on the body
-            const cm = this._m.chest, lm = this._m.chest_lid_0, dx = lm.ox - cm.ox, dy = lm.oy - cm.oy;
+        const cm = this._m.chest, lm = this._m.chest_lid_0;
+        if (lid?.every(Boolean) && pt([cm.ox, cm.oy]) && pt([lm.ox, lm.oy])) {  // lid frames are cropped on their own: ox/oy place them on the body
+            const dx = lm.ox - cm.ox, dy = lm.oy - cm.oy;
             lidA = this._actor(parent, lid[0], {x: chest.x + dx, y: chest.y + dy, width: lm.w, height: lm.h});
             parent.set_child_above_sibling(lidA, chest);
             lidA.set_pivot_point((cm.base[0] - dx) / lm.w, (cm.base[1] - dy) / lm.h);
@@ -587,19 +577,19 @@ export class Tank {
 
     // The first moving window becomes the current, with the engine's smoothed window velocity.
     _flow() {
-        const F = this.flow, cl = v => Math.max(-1500, Math.min(1500, v || 0));
+        const F = this.flow;
         let w = null;
         for (const q of this._ctx.world.windows) if (q.moving) { w = q; break; }
         F.on = !!w;
         if (!w) return;
-        F.x = w.x; F.y = w.y; F.w = w.w; F.h = w.h; F.vx = cl(w.vx); F.vy = cl(w.vy);
+        F.x = w.x; F.y = w.y; F.w = w.w; F.h = w.h; F.vx = clamp(w.vx || 0, -1500, 1500); F.vy = clamp(w.vy || 0, -1500, 1500);
     }
 
     // Glass-side things that move every tick: the torch follows the cursor, sand puffs rise and fade.
     _glass(dt) {
         const T = this._torch, P = this._ctx.world.pointer;
         if (T) {
-            T.v += ((this._nt && P.over && this._S.flashlight !== false ? 1 : 0) - T.v) * Math.min(1, dt * 4);
+            T.v += ((this._nt && P.over && this._S.flashlight ? 1 : 0) - T.v) * Math.min(1, dt * 4);
             const o = Math.round(T.v * T.max / 5) * 5;
             if (o !== T.o) T.a.set_opacity(T.o = o);
             const x = Math.round(P.x - T.an[0]), y = Math.round(P.y - T.an[1]);
@@ -617,7 +607,7 @@ export class Tank {
     // Light mood from the engine's lights schedule, dark scheme and idle; eased over a few seconds.
     _light(dt) {
         const W = this._ctx.world, nt = night(W);
-        const warm = W.lightsOn === undefined ? !nt && (W.hour < 8 || W.hour >= 18) : !!W.warm;
+        const warm = W.warm;
         const dim = Math.min(0.8, (nt ? 0.4 : 0) + (W.dark ? 0.15 : 0) + (W.idle > 600 ? 0.2 : 0));
         const k = Math.min(1, dt * 0.5);
         this._rays += ((nt ? 0 : 1) - this._rays) * k;
