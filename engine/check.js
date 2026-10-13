@@ -1,10 +1,10 @@
-// `gjs -m check.js`: host math, then every scene's own check.
+// `gjs -m engine/check.js` (make check): host math, then every scene's own check.
 import Gio from 'gi://Gio';
 import {parseManifest, scaleFor, bytesOf, frameOffset, maxHeight, canvasBytes, tileRange, BUDGET} from './render.js';
 import {spacing, heading, shear, spring} from './bend.js';
 import {makeWorld, update, covers, changed} from './world.js';
 import {resolve, encode, lightsAt, posterPlan, logLines, POSTER_COLOR} from './settings.js';
-import {SCENES} from './scenes/index.js';
+import {SCENES} from '../scenes/index.js';
 
 const ok = (c, msg) => { if (!c) throw new Error('FAIL: ' + msg); };
 
@@ -178,7 +178,7 @@ ok(pp.apply?.dark === mine.uri && pp.apply.uri === mine.uri && !pp.reset, 'turn 
 
 // Each scene's own check.js, when it has one.
 for (const id of Object.keys(SCENES)) {
-    if (Gio.File.new_for_uri(import.meta.url).get_parent().resolve_relative_path(`scenes/${id}/check.js`).query_exists(null))
-        await import(`./scenes/${id}/check.js`);
+    if (Gio.File.new_for_uri(import.meta.url).get_parent().resolve_relative_path(`../scenes/${id}/check.js`).query_exists(null))
+        await import(`../scenes/${id}/check.js`);
 }
 console.log('check: ok');

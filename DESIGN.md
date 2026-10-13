@@ -20,26 +20,26 @@ No subprocess, no WebKit, no video, no IPC, no deps.
   diff. Pull means a scene can never leak a signal connection.
 - **Registry `scenes/index.js`**, no scene.json: one line gives id, name, lazy loader and the
   scene's settings list; prefs.js imports it without `gi://St`.
-- **Settings are data.** A scene lists its knobs in `settings.js`; the host stores them all in one
+- **Settings are data.** A scene lists its knobs in its `settings.js`; the host stores them all in one
   GSettings key and builds the settings page from the list, so a new scene never touches the schema.
 - **Safety:** first-party scenes only (no user scene dir); try/catch around build and tick; slow-tick
   watchdog; three strikes per scene load and it stays stopped; every private shell field read through
-  `shell.js` (a missing one is logged once, never a half-built enable).
+  `engine/shell.js` (a missing one is logged once, never a half-built enable).
 
 ## Layout
 
 ```
 metadata.json        uuid interactive-wallpaper@lil-klorox, settings-schema
 extension.js         lifecycle, mount per monitor, frame clock, pause, watchdog, world fill, poster, Quick Settings tile
-shell.js             the ONLY private-API file (bg managers, background group, startup), each with a why-comment
-world.js             pure: makeWorld(), update(world, raw, dt), covers(rects, area), changed(raw, last)
-render.js            pure: parseManifest, scaleFor, bytesOf, frameOffset, BUDGET
-bend.js              pure: bendy many-sprite bodies (spacing, heading, shear, spring), see docs/writing-a-scene.md
-settings.js          pure: resolve/encode (scene settings), lightsAt, posterPlan, parseStore
-ctx.js               image(), sheet(), store, settings — the only St.ImageContent code
+engine/shell.js      the ONLY private-API file (bg managers, background group, startup), each with a why-comment
+engine/world.js      pure: makeWorld(), update(world, raw, dt), covers(rects, area), changed(raw, last)
+engine/render.js     pure: parseManifest, scaleFor, bytesOf, frameOffset, BUDGET
+engine/bend.js       pure: bendy many-sprite bodies (spacing, heading, shear, spring), see docs/writing-a-scene.md
+engine/settings.js   pure: resolve/encode (scene settings), lightsAt, posterPlan, parseStore
+engine/ctx.js        image(), sheet(), store, settings — the only St.ImageContent code
 prefs.js             settings window: on/off, scene, then the scene's own rows built from its list
 schemas/             keys scene, live, frozen, scene-settings, saved-background
-check.js             `gjs -m check.js`: render/world/settings/poster asserts, then each scenes/*/check.js
+engine/check.js      `make check`: render/world/settings/poster asserts, then each scenes/*/check.js
 scenes/index.js      {fishtank: {name, load: () => import('./fishtank/scene.js'), settings}, garden: {...}, dot: {...}}
 scenes/garden/       scene.js, sand.js (pure sand math), settings.js, check.js, assets/, blender/
 scenes/dot/          the minimal example scene (see docs/writing-a-scene.md)
@@ -48,6 +48,7 @@ dev.sh, tools/probe/ nested / headless test shell; tools/poster.sh makes a scene
 tools/restore-wallpaper.js  `make uninstall` puts the saved wallpaper back
 tools/parse-check.js `make pack`: staged files parse and their relative imports are packed
 tools/*.desktop      app-search entry that opens the settings window (installed by make install)
+build/               generated only (gitignored): the release zip, dev.sh's build/out; `make clean` wipes it
 Makefile             check | pack | install | uninstall
 ```
 
@@ -72,9 +73,9 @@ The scene-facing contract (`create(ctx)` and every `ctx` and `world` field) is w
   Registered as `settings` in `scenes/index.js`.
 - Stored in ONE key, `scene-settings` = JSON `{sceneId: {key: value}}`, only non-default values.
 - Mark `rebuild` only for what `create` alone can do; counts and swaps belong in `onSettings`.
-- `settings.js resolve()` is the trust boundary: wrong type, out of range, unlisted choice or bad JSON
+- `engine/settings.js resolve()` is the trust boundary: wrong type, out of range, unlisted choice or bad JSON
   → clamp or default, unknown keys dropped, never throws. `encode()` writes declared keys only and
-  keeps other scenes' blocks. `check.js` also checks every registered default fits its own declaration.
+  keeps other scenes' blocks. `engine/check.js` also checks every registered default fits its own declaration.
 - Live: on `changed::scene-settings` the host resolves again, updates `ctx.settings` in place and
   calls `onSettings(changed)`; if a changed key has `rebuild: true` it rebuilds the scene instead
   (texture cache survives). Rebuilds wait for 250 ms of quiet, so holding a spin button builds once,
@@ -175,7 +176,7 @@ live scene then adds the fish on top instead of moving them, and the light match
   `dt` is clamped to 0.1 s, so a resume is one normal frame, and that tick's `world.gap` says how long
   it was away (also after a watchdog rest or an unfreeze); the scene caps its own catch-up.
 - Sleepy ticks: a tick that returns `false` puts that monitor's scene to sleep; it is ticked every 0.2 s,
-  or at once when pure `changed(raw, last)` (world.js) sees pointer/button/notification/lights/dark change,
+  or at once when pure `changed(raw, last)` (engine/world.js) sees pointer/button/notification/lights/dark change,
   or on a restack, a drag or a settings change. Each monitor has its own `dt` (clamped 0.1 s awake,
   0.3 s asleep). The host clock and pointer poll keep running; that poll is the whole cost of a sleeper.
 - Hotplug: no monitors (lid shut, nothing plugged in) unmounts and keeps the textures for when a screen

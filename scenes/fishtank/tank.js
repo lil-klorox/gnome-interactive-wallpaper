@@ -5,7 +5,7 @@ import St from 'gi://St';
 import { Food } from './food.js';
 import { Critters, night, rng } from './critters.js';
 import { drift, pt } from './steer.js';
-import { shear, spring, clamp } from '../../bend.js';
+import { shear, spring, clamp } from '../../engine/bend.js';
 
 const TAU = Math.PI * 2;
 const SAND = 1150;       // ref row of the sand's back edge

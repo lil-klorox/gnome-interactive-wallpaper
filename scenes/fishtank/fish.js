@@ -9,7 +9,7 @@ import St from 'gi://St';
 import Cairo from 'cairo';
 import { makeBrain, think, PERSONALITY, drowsy, lazy, petOf, release } from './brain.js';
 import { makeFish, step, blend, drift, spotOf, here, resume, coast, pt } from './steer.js';
-import { clamp } from '../../bend.js';
+import { clamp } from '../../engine/bend.js';
 
 // n: default count (settings override); cruise px/s at full size; burst/coast: wander gait s;
 // turn rad/s; school: id; morph: optional colour sheet `<name>-<morph>`; rate: x tail beat;

@@ -4,7 +4,7 @@ import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk';
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 import {SCENES} from './scenes/index.js';
-import {resolve, encode, logLines, parseStore} from './settings.js';
+import {resolve, encode, logLines, parseStore} from './engine/settings.js';
 
 const KEY = 'scene-settings';
 

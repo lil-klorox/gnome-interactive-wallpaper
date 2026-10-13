@@ -7,11 +7,11 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as QuickSettings from 'resource:///org/gnome/shell/ui/quickSettings.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {SCENES} from './scenes/index.js';
-import {makeWorld, update, covers, changed} from './world.js';
-import {makeCtx, loadManifest} from './ctx.js';
-import {bytesOf, scaleFor, maxHeight} from './render.js';
-import {resolve, lightsAt, posterPlan} from './settings.js';
-import {bgManagers, backgroundGroup, startingUp} from './shell.js';
+import {makeWorld, update, covers, changed} from './engine/world.js';
+import {makeCtx, loadManifest} from './engine/ctx.js';
+import {bytesOf, scaleFor, maxHeight} from './engine/render.js';
+import {resolve, lightsAt, posterPlan} from './engine/settings.js';
+import {bgManagers, backgroundGroup, startingUp} from './engine/shell.js';
 
 const FRAME = 0.025;     // every 2nd frame at 60 Hz with jitter slack (0.030 dropped ~4 % of ticks)
 const LIMIT_MS = 66;     // slow tick

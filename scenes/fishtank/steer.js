@@ -13,7 +13,7 @@ export function makeFish(o, rand = Math.random) {
     };
 }
 
-import { clamp } from '../../bend.js';
+import { clamp } from '../../engine/bend.js';
 // Manifest points are untrusted: one bad point skips that sprite, not the rest of the scenery.
 export const pt = p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite);
 export const FLOW = 180;  // px from a dragged window's edge its current still reaches

@@ -203,11 +203,11 @@ scene like any other error. It's freed with `ctx.root`.
 ## Bendy bodies
 
 A plant, a tail, a rope or an eel is easiest to draw as a row of pieces, each a sprite, that bend
-one after another. `bend.js` in the engine has the four small helpers that keep such a row looking
+one after another. `engine/bend.js` has the four small helpers that keep such a row looking
 like one smooth body instead of a stack of blocks:
 
 ```js
-import {spacing, heading, shear, spring} from '../../bend.js';
+import {spacing, heading, shear, spring} from '../../engine/bend.js';
 
 const gap = spacing(seg.w, 0.2);       // pieces whose art fades out over 20 % at each end
 piece.set_pivot_point(0, 0);           // shear replaces the piece's own move/rotate/mirror, so do those on its parent
@@ -267,7 +267,7 @@ does. Its helpers in `scenes/fishtank/blender/common.py` set up the camera and l
 
 Pick your scene and its settings in the test shell's Quick Settings tile. Errors show up in that
 terminal. If your scene has logic worth checking, add a `scenes/<id>/check.js` with plain asserts
-(no `gi` imports); the root `check.js` runs it, and it also checks that every default in your
+(no `gi` imports); `make check` runs it, and it also checks that every default in your
 settings list fits its own rules.
 
 ## Open a PR

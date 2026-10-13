@@ -3,7 +3,7 @@
 // Usage: gjs -m tools/restore-wallpaper.js <schemas dir> <uuid>
 import Gio from 'gi://Gio';
 import System from 'system';
-import {posterPlan} from '../settings.js';
+import {posterPlan} from '../engine/settings.js';
 
 const [dir, uuid] = System.programArgs;
 const src = Gio.SettingsSchemaSource.new_from_directory(dir, Gio.SettingsSchemaSource.get_default(), false);

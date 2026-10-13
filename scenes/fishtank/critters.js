@@ -3,7 +3,7 @@
 // Each is {tick(dt, t)}; missing or misshapen art skips that critter (logged once). Positions are
 // screen px in the fish layers, ref px in the scaled mid/far layers.
 import { FAST, SEE } from './brain.js';
-import { heading, spacing, shear } from '../../bend.js';
+import { heading, spacing, shear } from '../../engine/bend.js';
 import { pt } from './steer.js';
 
 const TAU = Math.PI * 2;

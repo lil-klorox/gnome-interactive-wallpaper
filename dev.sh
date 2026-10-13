@@ -1,7 +1,7 @@
 #!/bin/sh
 # Run the extension in a throwaway gnome-shell; your real session is never touched.
 # `./dev.sh` = nested window; `./dev.sh --headless [secs]` = virtual monitor driven by tools/probe,
-# writes s*.png and stats.txt to $OUT; exits 1 if stats.txt is missing or has a FAIL line, or the
+# writes s*.png and stats.txt to $OUT (default build/out); exits 1 if stats.txt is missing or has a FAIL line, or the
 # extension failed to load.
 # Env: SCENE=<id>, SIZE=WxH, SOAK=n off/on cycles (secs >= 22 + 3n), HOUR=0-23 (via TZ),
 # POSTER=1 SHOT=secs (tools/poster.sh), RACE=1 lifecycle races (secs >= 14).
@@ -27,7 +27,7 @@ export SCHEMADIR="$here/schemas"
 setup="$set_scene && gsettings set org.gnome.shell welcome-dialog-last-shown-version 999"
 if [ "${1:-}" = --headless ]; then
     secs=${2:-40}
-    export OUT="${OUT:-$here/tools/out}" TARGET_UUID="$uuid" SECS="$secs"
+    export OUT="${OUT:-$here/build/out}" TARGET_UUID="$uuid" SECS="$secs"
     mkdir -p "$OUT" && rm -f "$OUT"/s*.png "$OUT/stats.txt"
     ln -s "$here/tools/probe" "$tmp/data/gnome-shell/extensions/probe@dev"
     timeout -k 5 "$((secs + 10))" dbus-run-session -- sh -c "$setup && gsettings set org.gnome.shell enabled-extensions \"['probe@dev', $exts]\" && exec gnome-shell --headless --wayland --virtual-monitor $size" > "$OUT/log" 2>&1 || true
