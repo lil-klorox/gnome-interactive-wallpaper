@@ -35,12 +35,19 @@ export const blend = (t, op, out) => {
     return out;
 };
 
-// Advance one fish. it = intent from brain.js, b = swim bounds, all = fish sharing its layer.
-export function step(f, dt, it, b, all, rand = Math.random) {
+// A window parked a while (not just opened, not sliding): wanderers treat it as solid rock.
+const STILL = 20;  // ponytail: s a window sits before fish leave from under it
+const parked = w => !w.moving && w.age > STILL && Math.hypot(w.vx || 0, w.vy || 0) < 20;
+const SENSE = 150;  // px from the glass or a parked window where a wanderer starts turning away
+
+// Advance one fish. it = intent from brain.js, b = swim bounds, all = fish sharing its layer,
+// wins = world.windows (parked ones push wanderers out into open water, see SENSE).
+export function step(f, dt, it, b, all, rand = Math.random, wins = null) {
     dt = Math.min(dt, 0.1);
     const vx = f.vx, vy = f.vy, top = f.cruise * it.speed;
     const flee = it.ax !== undefined, wander = !flee && it.tx === undefined;
-    let ax = 0, ay = 0, coast = false;  // wanted change in velocity, summed from each behaviour
+    let ax = 0, ay = 0, coast = false, hidden = false;  // wanted change in velocity, summed from each behaviour
+    const x0 = b.x + f.pad, x1 = b.x + b.w - f.pad, y0 = b.y + f.pad, y1 = b.y + b.h - f.pad;
 
     if (flee) {  // full speed directly away
         const dx = f.x - it.ax, dy = f.y - it.ay, d = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -53,6 +60,37 @@ export function step(f, dt, it, b, all, rand = Math.random) {
     } else {  // smooth noisy heading, mostly horizontal; a short tail-beat burst, then a long coast
         f.wr = f.wr * (1 - dt) + (rand() - 0.5) * 6 * (it.noise ?? 1) * dt;
         f.wander += f.wr * dt;
+        // open water: a parked window pushes out (full strength under it, towards its nearest edge that opens
+        // onto water; fading to 0 SENSE px outside), and near it or the glass the heading bends away early, so
+        // fish curve off into open water instead of nosing up to the edge and bouncing (fix: wanderers didn't
+        // see windows, so a separate seek-and-hang state pulled them out and they bunched in the gap)
+        let ex = 0, ey = 0;
+        const mid = it.band ? b.y + b.h * (it.band[0] + it.band[1]) / 2 : NaN;
+        // an edge opens onto water when a fish fits between it and the glass and just past it isn't another parked
+        // window (fix: tiled/overlapping windows bounced fish across the seam, a sliver of glass trapped them)
+        const opens = (x, y, room) => room >= f.pad && !wins.some(o => parked(o) && x >= o.x && x <= o.x + o.w && y >= o.y && y <= o.y + o.h);
+        if (wins) for (const w of wins) {
+            if (!parked(w)) continue;
+            const l = f.x - w.x, r = w.x + w.w - f.x, t = f.y - w.y, d = w.y + w.h - f.y;
+            const T = l >= 0 && r >= 0 && opens(f.x, w.y - f.pad, w.y - y0), D = l >= 0 && r >= 0 && opens(f.x, w.y + w.h + f.pad, y1 - w.y - w.h);
+            if ((T || D) && mid >= w.y && mid <= w.y + w.h) hidden = true;  // home depth is under it here: roam the open water instead
+            if (l >= 0 && r >= 0 && t >= 0 && d >= 0) {  // under it: out the nearest edge that opens onto water
+                let m = 1e9, sx = 0, sy = 0;
+                if (l < m && opens(w.x - f.pad, f.y, w.x - x0)) { m = l; sx = -1; sy = 0; }
+                if (r < m && opens(w.x + w.w + f.pad, f.y, x1 - w.x - w.w)) { m = r; sx = 1; sy = 0; }
+                if (t < m && T) { m = t; sx = 0; sy = -1; }
+                if (d < m && D) { sx = 0; sy = 1; }
+                ex += sx; ey += sy;
+                continue;
+            }
+            const dx = l < 0 ? l : r < 0 ? -r : 0, dy = t < 0 ? t : d < 0 ? -d : 0, g = Math.hypot(dx, dy), k = Math.max(0, 1 - g / SENSE) / g;
+            ex += dx * k * 0.4; ey += dy * k * 0.4;
+        }
+        ax += ex * f.cruise; ay += ey * f.cruise;
+        ex += Math.max(0, 1 - (f.x - x0) / SENSE) - Math.max(0, 1 - (x1 - f.x) / SENSE);  // the glass already pushes (below)
+        let turn = Math.atan2(Math.sin(f.wander) * 0.5, ex) - f.wander;  // point away sideways, keep the up/down sense
+        turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+        f.wander += turn * Math.min(1, Math.abs(ex) * 2 * dt);
         f.beat += dt;
         if (f.beat > f.burst + f.beatLen) {
             f.beat = 0;
@@ -68,12 +106,12 @@ export function step(f, dt, it, b, all, rand = Math.random) {
     }
 
     // soft bounds (pad keeps the whole body in; a seek target is trusted), wanderers keep to their band
-    const m = 70, x0 = b.x + f.pad, x1 = b.x + b.w - f.pad, y0 = b.y + f.pad, y1 = b.y + b.h - f.pad;
+    const m = 70;
     const push = d => wander || flee ? Math.max(0, d) / m * f.cruise * 3 : 0;
     const px = push(x0 + m - f.x) - push(f.x - (x1 - m)), py = push(y0 + m - f.y) - push(f.y - (y1 - m));
     ax += px;
     ay += py;
-    if (wander && it.band) ay += (push(b.y + b.h * it.band[0] - f.y) - push(f.y - b.y - b.h * it.band[1])) * 0.5;
+    if (wander && it.band && !hidden) ay += (push(b.y + b.h * it.band[0] - f.y) - push(f.y - b.y - b.h * it.band[1])) * 0.5;
 
     // separation, school cohesion + alignment, loose shoaling (intent.shoal); mates in the blind spot
     // behind don't pull, so leaders emerge

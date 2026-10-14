@@ -24,7 +24,7 @@
 //                multiplier (night/idle), lazy: speed multiplier, night: lights off, act: activity
 //                0.5..1.5, curiosity: false = ignore cursor + critters, spots: [{x,y}] critters worth
 //                a look, perches: [{x,y}] plant stems, torch: the night flashlight is on the cursor,
-//                windows: world.windows (a still one sends some fish out to open water), idle: s since input }
+//                idle: s since input }
 // Brain fields other code reads: state, fed (food eaten), nods (bumps each nose-down: bite,
 // sand nibble), cling (pleco on the glass), timer. fish.js sets pet (the tame favourite).
 
@@ -71,14 +71,6 @@ function threat(c) {
     }
     return null;
 }
-// A window parked a while (not just opened, not sliding) over (x, y).
-const STILL = 20;  // ponytail: s a window sits before fish leave from under it
-const parked = w => !w.moving && w.age > STILL && Math.hypot(w.vx || 0, w.vy || 0) < 20;
-const still = (c, x, y) => c.windows?.some(w => parked(w) && x >= w.x && x <= w.x + w.w && y >= w.y && y <= w.y + w.h);
-// How far (x, y) sits from the nearest parked window's edge (0 inside one, capped).
-const gap = (c, x, y) => (c.windows ?? []).reduce((m, w) => !parked(w) ? m :
-    Math.min(m, Math.hypot(Math.max(w.x - x, 0, x - w.x - w.w), Math.max(w.y - y, 0, y - w.y - w.h))), 400);
-
 // Best food piece for this fish, or null: own layer only, nearest wins; a piece another fish holds is
 // skipped (one fish per piece, so a pinch spreads out instead of a scrum on one flake). Bottom
 // feeders take only sunk food; the rest chase sinking food all the way down but leave what lies on
@@ -175,7 +167,7 @@ function restless(b, c) {
     const P = b.pers, alone = c.mates.length < 2, act = c.act ?? 1, slow = (c.drowsy ?? 1) / act;
     const w = [['nibble', (P.nibble ?? 0) * act], ['rest', (P.rest ?? 0) * slow], ['follow', alone ? 0 : (P.follow ?? 0) * act],
         ['gulp', P.gulp], ['hover', (P.hover ?? 0) * slow], ['sit', (P.sit ?? 0) * slow],
-        ['home', c.perches?.length ? P.home : 0], ['open', still(c, c.f.x, c.f.y) ? 0.6 : 0], ['idle', 1]];
+        ['home', c.perches?.length ? P.home : 0], ['idle', 1]];
     let r = c.rand() * w.reduce((s, [, x]) => s + (x ?? 0), 0);
     for (const [name, x] of w) if ((r -= x ?? 0) <= 0) return name;
     return 'idle';
@@ -307,29 +299,6 @@ export const STATES = {
         update: (b, c) => {
             const p = c.perches?.[b.homeIdx % (c.perches?.length || 1)];
             return !p || b.timer <= 0 ? 'idle' : calm(b, c, sway(b, p.x, p.y, 0.5));
-        },
-    },
-    open: {  // a still window covers this fish: drift well out into open water and hang there a while
-        enter: (b, c) => {
-            // best of 16 spots: far from window edges and from other fish already out, so they spread
-            // instead of lining up along the border (fix: first-open-spot picks hugged the window edge)
-            const { b: w, f } = c, [t0, t1] = b.pers.band, taken = c.mates.filter(o => o.f !== f && o.b.state === 'open');
-            let best = -1;
-            b.timer = 30; b.got = false;  // time to get there; the hang starts on arrival
-            for (let i = 0; i < 16; i++) {
-                const x = w.x + f.pad + c.rand() * (w.w - 2 * f.pad), y = Math.min(sandY(c), w.y + w.h * (t0 + c.rand() * (t1 - t0)));
-                const g = gap(c, x, y);
-                if (!g) continue;  // mid-gap beats hugging either the window or the glass
-                const s = 2 * Math.min(g, x - w.x, w.x + w.w - x, 250) + taken.reduce((m, o) => Math.min(m, Math.hypot(o.b.tx - x, o.b.ty - y)), 250);
-                if (s > best) { best = s; b.tx = x; b.ty = y; }
-            }
-            if (best < 0) b.timer = 0;  // nowhere open: stay put
-        },
-        update: (b, c) => {
-            const far = Math.abs(c.f.x - b.tx) + Math.abs(c.f.y - b.ty) > 30;
-            if (!far && !b.got) { b.got = true; b.timer = 10 + c.rand() * 10; }
-            if (b.timer <= 0) return 'idle';
-            return calm(b, c, far ? to(I(b, 0.6), b.tx, b.ty) : sway(b, b.tx, b.ty, 0.4));
         },
     },
     flare: {  // betta: stops, faces the rival, swells

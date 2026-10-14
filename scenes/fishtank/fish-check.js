@@ -10,7 +10,7 @@ const ok = (c, msg) => { if (!c) throw new Error('FAIL fish: ' + msg); };
 const B = { x: 0, y: 0, w: 1600, h: 900 }, dt = 1 / 15;
 const fish = (x, y, name, o = {}) => ({ f: makeFish({ x, y, cruise: 60, pad: 20, ...o }, rand), b: makeBrain(PERSONALITY[name], rand) });
 const ctx = (o, mates, w = {}) => ({ f: o.f, p: null, b: B, mates, dt, rand, layer: 1, perches: [], spots: [], ...w });
-const tick = (all, w) => { for (const o of all) step(o.f, dt, think(o.b, ctx(o, all, w)), B, all.map(m => m.f), rand); };
+const tick = (all, w) => { for (const o of all) step(o.f, dt, think(o.b, ctx(o, all, w)), B, all.map(m => m.f), rand, w?.windows); };
 
 // food stub with the food.js shape: 3 bites finish a piece
 const piece = (x, y, o = {}) => ({ live: true, layer: 1, x, y, claims: 0, bites: 0, settled: false, born: born++, ...o });
@@ -118,25 +118,23 @@ for (const n of [0, 1]) {
     const it = think(t.b, ctx(t, duo));
     ok(it.ax === l.f.x && it.speed >= 1.2 || t.b.state !== 'idle', 'tetra keeps away from the lionfish');
 }
-// a fish under a window parked a while heads out to open water; idle non-school fish drift apart
+// parked windows: wandering fish swim out from under one, and a window over their whole home depth leaves
+// them in the open water below (the old open-water picks NaN'd them there); idle fish drift apart
 {
-    const win = { x: 200, y: 100, w: 1200, h: 700, moving: false, vx: 0, vy: 0, age: 100 }, n = 15 * 120;
-    const out = windows => {
-        const all = [0, 1, 2, 3, 4, 5].map(i => fish(500 + i * 120, 450, 'clown'));
-        let k = 0, clear = 0, m = 0;
-        for (let i = 0; i < n; i++) {
+    const W = (x, w, h) => ({ x, y: 0, w, h, moving: false, vx: 0, vy: 0, age: 100 });
+    const run = (windows, hit) => {
+        const all = [0, 1, 2, 3, 4, 5].map(i => fish(300 + i * 200, 450, 'clown'));
+        let k = 0;
+        for (let i = 0; i < 15 * 180; i++) {
             tick(all, { windows });
-            for (const o of all) {
-                k += o.f.x < win.x || o.f.x > win.x + win.w || o.f.y > win.y + win.h;
-                if (o.b.state === 'open' && o.b.got) { m++; clear += Math.max(win.x - o.b.tx, o.b.tx - win.x - win.w, o.b.ty - win.y - win.h); }
-            }
+            for (const { f } of all) { ok(Number.isFinite(f.x + f.y), 'fish stay finite beside a window'); k += hit(f); }
         }
-        out.clear = clear / (m || 1);
-        return k / n / all.length;
+        return k / 15 / 180 / 6;
     };
-    const bare = out([]), cov = out([win]);
-    ok(cov > bare * 1.2, `open water (${bare.toFixed(2)} out bare, ${cov.toFixed(2)} under a window)`);
-    ok(out.clear > 80, `open-water spots sit well clear of the window (${out.clear | 0} px)`);
+    const side = run([W(0, 1000, 900)], f => f.x < 1000), top = run([W(0, 1600, 700)], f => f.y < 700);
+    // tiled halves: no edge opens onto water, so no push back and forth across the seam (it was ~0.5 there)
+    const seam = run([W(0, 800, 900), W(800, 800, 900)], f => Math.abs(f.x - 800) < 60);
+    ok(side < 0.4 && top < 0.1 && seam < 0.2, `out from under parked windows (${side.toFixed(2)} side, ${top.toFixed(2)} top, ${seam.toFixed(2)} at a seam)`);
     const it = { speed: 0.6, shoal: 1, band: [0.35, 0.75] };  // packed shoaling wanderers, 10 s: ~200 px apart without the nudge
     let sum = 0;
     for (let r = 0; r < 60; r++) {
