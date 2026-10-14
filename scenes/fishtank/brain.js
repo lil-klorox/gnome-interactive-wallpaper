@@ -73,8 +73,11 @@ function threat(c) {
 }
 // A window parked a while (not just opened, not sliding) over (x, y).
 const STILL = 20;  // ponytail: s a window sits before fish leave from under it
-const still = (c, x, y) => c.windows?.some(w => !w.moving && w.age > STILL && Math.hypot(w.vx || 0, w.vy || 0) < 20 &&
-    x >= w.x && x <= w.x + w.w && y >= w.y && y <= w.y + w.h);
+const parked = w => !w.moving && w.age > STILL && Math.hypot(w.vx || 0, w.vy || 0) < 20;
+const still = (c, x, y) => c.windows?.some(w => parked(w) && x >= w.x && x <= w.x + w.w && y >= w.y && y <= w.y + w.h);
+// How far (x, y) sits from the nearest parked window's edge (0 inside one, capped).
+const gap = (c, x, y) => (c.windows ?? []).reduce((m, w) => !parked(w) ? m :
+    Math.min(m, Math.hypot(Math.max(w.x - x, 0, x - w.x - w.w), Math.max(w.y - y, 0, y - w.y - w.h))), 400);
 
 // Best food piece for this fish, or null: own layer only, nearest wins; a piece another fish holds is
 // skipped (one fish per piece, so a pinch spreads out instead of a scrum on one flake). Bottom
@@ -306,18 +309,21 @@ export const STATES = {
             return !p || b.timer <= 0 ? 'idle' : calm(b, c, sway(b, p.x, p.y, 0.5));
         },
     },
-    open: {  // a still window covers this fish: drift out to open water and hang there a while (a school goes as one)
+    open: {  // a still window covers this fish: drift well out into open water and hang there a while
         enter: (b, c) => {
-            const { b: w, f } = c, [t0, t1] = b.pers.band;  // only schoolmates share a target, loners spread out
-            const m = f.school && c.mates.find(o => o.b.state === 'open' && o.f !== f && o.f.school === f.school && dist(o.f, f) < 400);
+            // best of 16 spots: far from window edges and from other fish already out, so they spread
+            // instead of lining up along the border (fix: first-open-spot picks hugged the window edge)
+            const { b: w, f } = c, [t0, t1] = b.pers.band, taken = c.mates.filter(o => o.f !== f && o.b.state === 'open');
+            let best = -1;
             b.timer = 30; b.got = false;  // time to get there; the hang starts on arrival
-            if (m) { b.tx = m.b.tx; b.ty = m.b.ty; return; }
-            for (let i = 0; i < 8; i++) {
-                b.tx = w.x + f.pad + c.rand() * (w.w - 2 * f.pad);
-                b.ty = Math.min(sandY(c), w.y + w.h * (t0 + c.rand() * (t1 - t0)));
-                if (!still(c, b.tx, b.ty)) return;
+            for (let i = 0; i < 16; i++) {
+                const x = w.x + f.pad + c.rand() * (w.w - 2 * f.pad), y = Math.min(sandY(c), w.y + w.h * (t0 + c.rand() * (t1 - t0)));
+                const g = gap(c, x, y);
+                if (!g) continue;  // mid-gap beats hugging either the window or the glass
+                const s = 2 * Math.min(g, x - w.x, w.x + w.w - x, 250) + taken.reduce((m, o) => Math.min(m, Math.hypot(o.b.tx - x, o.b.ty - y)), 250);
+                if (s > best) { best = s; b.tx = x; b.ty = y; }
             }
-            b.timer = 0;  // nowhere open: stay put
+            if (best < 0) b.timer = 0;  // nowhere open: stay put
         },
         update: (b, c) => {
             const far = Math.abs(c.f.x - b.tx) + Math.abs(c.f.y - b.ty) > 30;

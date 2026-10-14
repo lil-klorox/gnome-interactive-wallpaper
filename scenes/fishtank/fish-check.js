@@ -123,15 +123,20 @@ for (const n of [0, 1]) {
     const win = { x: 200, y: 100, w: 1200, h: 700, moving: false, vx: 0, vy: 0, age: 100 }, n = 15 * 120;
     const out = windows => {
         const all = [0, 1, 2, 3, 4, 5].map(i => fish(500 + i * 120, 450, 'clown'));
-        let k = 0;
+        let k = 0, clear = 0, m = 0;
         for (let i = 0; i < n; i++) {
             tick(all, { windows });
-            for (const o of all) k += o.f.x < win.x || o.f.x > win.x + win.w || o.f.y > win.y + win.h;
+            for (const o of all) {
+                k += o.f.x < win.x || o.f.x > win.x + win.w || o.f.y > win.y + win.h;
+                if (o.b.state === 'open' && o.b.got) { m++; clear += Math.max(win.x - o.b.tx, o.b.tx - win.x - win.w, o.b.ty - win.y - win.h); }
+            }
         }
+        out.clear = clear / (m || 1);
         return k / n / all.length;
     };
     const bare = out([]), cov = out([win]);
     ok(cov > bare * 1.2, `open water (${bare.toFixed(2)} out bare, ${cov.toFixed(2)} under a window)`);
+    ok(out.clear > 80, `open-water spots sit well clear of the window (${out.clear | 0} px)`);
     const it = { speed: 0.6, shoal: 1, band: [0.35, 0.75] };  // packed shoaling wanderers, 10 s: ~200 px apart without the nudge
     let sum = 0;
     for (let r = 0; r < 60; r++) {
