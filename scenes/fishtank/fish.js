@@ -120,7 +120,7 @@ export class School {
         this._saved = 0;
         this._c = { f: null, p: null, b, mates: null, dt: 0, rand: Math.random, threats: this._threats, food: null,
             feeder: tank.food, layer: 1, attn: null, attnNew: false, wake: false, drowsy: 1, lazy: 1, night: false,
-            act: 1, curiosity: true, spots: null, perches: tank.perches };
+            act: 1, curiosity: true, spots: null, perches: tank.perches, windows: null, idle: 0 };
     }
 
     // Share of fish in the far layer.
@@ -285,6 +285,8 @@ export class School {
         c.curiosity = env.curiosity;
         c.spots = c.curiosity ? tank.spots ?? null : null;
         c.drowsy = drowsy(night, W.idle);
+        c.idle = W.idle;
+        c.windows = W.windows;
         c.lazy = lazy(night, W.idle) * c.act;
         this._wake = this._idle > 60 && W.idle < 5 ? THINK : this._wake - 1;
         c.wake = this._wake > 0;

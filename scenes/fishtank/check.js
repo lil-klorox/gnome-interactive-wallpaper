@@ -103,13 +103,15 @@ const fleeRate = fed => {
 const r0 = fleeRate(0), r1 = fleeRate(100);
 ok(Math.abs(r1 / r0 - 0.5) < 0.1, `fed fish half as skittish (${r0} -> ${r1})`);
 
-// night: more time resting than by day
+// night: more time resting than by day (summed over 3 duos, one run swings too much with the seed)
 const restTime = hour => {
-    const duo = [fish(400, 300, {}), fish(900, 500, {})];
     let n = 0;
-    for (let i = 0; i < 30 * 600; i++) for (const q of duo) {
-        run(q, null, duo, { drowsy: drowsy(hour >= 21, 0), lazy: lazy(hour >= 21, 0) });
-        n += q.b.state === 'rest';
+    for (let r = 0; r < 3; r++) {
+        const duo = [fish(400, 300, {}), fish(900, 500, {})];
+        for (let i = 0; i < 30 * 600; i++) for (const q of duo) {
+            run(q, null, duo, { drowsy: drowsy(hour >= 21, 0), lazy: lazy(hour >= 21, 0) });
+            n += q.b.state === 'rest';
+        }
     }
     return n;
 };

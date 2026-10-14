@@ -70,7 +70,8 @@ If something looks wrong, the extension writes short notes to GNOME's log, which
 Move your mouse over the empty desktop and some swim over to see what you are while others dart
 away. Click the empty desktop and food drops in: flakes tumble and sink, fish race for them, and the
 bottom feeders tidy up what lands on the sand. Drag a window across the tank and the fish scatter
-out from under it. The lights follow a schedule you can set, a notification sends up a burst of
+out from under it, and a window left in one place for a while slowly sends some of them off to
+swim in the open water you can still see. The lights follow a schedule you can set, a notification sends up a burst of
 bubbles, and fish you feed get braver over the following days and slowly grow.
 
 Hold the button down to pour food, and at night your cursor becomes a flashlight the small fish

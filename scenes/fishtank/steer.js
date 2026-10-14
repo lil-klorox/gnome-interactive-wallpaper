@@ -85,6 +85,10 @@ export function step(f, dt, it, b, all, rand = Math.random) {
         if (d2 > 102400) continue;  // 320 px: past every radius below
         const d = Math.sqrt(d2) || 1, r = f.pad + o.pad + 12;
         if (d < r) { ax += dx / d * (1 - d / r) * f.cruise * 3; ay += dy / d * (1 - d / r) * f.cruise * 3; }
+        if (wander && !(f.school && o.school === f.school)) {  // a faint nudge apart so idle fish spread over the tank
+            const k = (1 - d / 320) * f.cruise * 0.08;  // ponytail: tune vs shoal pull if fish look lonely or still bunch
+            ax += dx / d * k; ay += dy / d * k;
+        }
         if ((it.tight ?? 1) <= 1 && (-dx * cd - dy * sd) / d < -0.7) continue;  // a packed school (tight > 1) feels mates behind too
         const ovx = o.vx, ovy = o.vy;
         if (f.school && o.school === f.school) { sn++; sx += o.x; sy += o.y; svx += ovx; svy += ovy; }

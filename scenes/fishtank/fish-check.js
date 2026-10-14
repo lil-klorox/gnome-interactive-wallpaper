@@ -118,6 +118,29 @@ for (const n of [0, 1]) {
     const it = think(t.b, ctx(t, duo));
     ok(it.ax === l.f.x && it.speed >= 1.2 || t.b.state !== 'idle', 'tetra keeps away from the lionfish');
 }
+// a fish under a window parked a while heads out to open water; idle non-school fish drift apart
+{
+    const win = { x: 200, y: 100, w: 1200, h: 700, moving: false, vx: 0, vy: 0, age: 100 }, n = 15 * 120;
+    const out = windows => {
+        const all = [0, 1, 2, 3, 4, 5].map(i => fish(500 + i * 120, 450, 'clown'));
+        let k = 0;
+        for (let i = 0; i < n; i++) {
+            tick(all, { windows });
+            for (const o of all) k += o.f.x < win.x || o.f.x > win.x + win.w || o.f.y > win.y + win.h;
+        }
+        return k / n / all.length;
+    };
+    const bare = out([]), cov = out([win]);
+    ok(cov > bare * 1.2, `open water (${bare.toFixed(2)} out bare, ${cov.toFixed(2)} under a window)`);
+    const it = { speed: 0.6, shoal: 1, band: [0.35, 0.75] };  // packed shoaling wanderers, 10 s: ~200 px apart without the nudge
+    let sum = 0;
+    for (let r = 0; r < 60; r++) {
+        const all = [0, 1, 2, 3, 4, 5].map(i => makeFish({ x: 760 + i * 20, y: 450, cruise: 70, pad: 20 }, rand));
+        for (let i = 0; i < 150; i++) for (const f of all) step(f, dt, it, B, all, rand);
+        for (const f of all) for (const g of all) sum += Math.hypot(f.x - g.x, f.y - g.y) / 1800;
+    }
+    ok(sum > 230, `wanderers nudged apart (${sum | 0} px)`);
+}
 // saved spots (store data): odd ones ignored, fractions clamped, a long absence moves at most 20 s, in bounds
 {
     const f = makeFish({ x: 5, y: 5, cruise: 60, pad: 20 }, rand), now = 1e12;
